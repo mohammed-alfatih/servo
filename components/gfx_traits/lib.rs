@@ -8,6 +8,8 @@
 #![crate_name = "gfx_traits"]
 #![crate_type = "rlib"]
 
+#![deny(unsafe_code)]
+
 extern crate azure;
 extern crate euclid;
 extern crate heapsize;
@@ -103,6 +105,10 @@ impl LayerId {
         let LayerId(layer_type, id, _) = *self;
         LayerId(layer_type, id, 0)
     }
+
+    pub fn kind(&self) -> LayerType {
+        self.0
+    }
 }
 
 /// All layer-specific information that the painting task sends to the compositor other than the
@@ -138,8 +144,7 @@ pub struct Epoch(pub u32);
 
 impl Epoch {
     pub fn next(&mut self) {
-        let Epoch(ref mut u) = *self;
-        *u += 1;
+        self.0 += 1;
     }
 }
 
@@ -148,7 +153,6 @@ pub struct FrameTreeId(pub u32);
 
 impl FrameTreeId {
     pub fn next(&mut self) {
-        let FrameTreeId(ref mut u) = *self;
-        *u += 1;
+        self.0 += 1;
     }
 }

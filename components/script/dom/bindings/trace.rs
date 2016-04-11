@@ -29,7 +29,6 @@
 //! The `no_jsmanaged_fields!()` macro adds an empty implementation of `JSTraceable` to
 //! a datatype.
 
-use canvas_traits::WebGLError;
 use canvas_traits::{CanvasGradientStop, LinearGradientStyle, RadialGradientStyle};
 use canvas_traits::{CompositionOrBlending, LineCapStyle, LineJoinStyle, RepetitionStyle};
 use cssparser::RGBA;
@@ -39,6 +38,7 @@ use dom::bindings::js::{JS, Root};
 use dom::bindings::refcounted::Trusted;
 use dom::bindings::reflector::{Reflectable, Reflector};
 use dom::bindings::utils::WindowProxyHandler;
+use dom::worker::SharedRt;
 use encoding::types::EncodingRef;
 use euclid::length::Length as EuclidLength;
 use euclid::matrix2d::Matrix2D;
@@ -64,8 +64,8 @@ use net_traits::response::HttpsState;
 use net_traits::storage_thread::StorageType;
 use profile_traits::mem::ProfilerChan as MemProfilerChan;
 use profile_traits::time::ProfilerChan as TimeProfilerChan;
-use script_thread::ScriptChan;
-use script_traits::{LayoutMsg, ScriptMsg, TimerEventId, TimerSource, UntrustedNodeAddress};
+use script_runtime::ScriptChan;
+use script_traits::{LayoutMsg, ScriptMsg, TimerEventId, TimerSource, TouchpadPressurePhase, UntrustedNodeAddress};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::boxed::FnBox;
@@ -91,7 +91,7 @@ use style::values::specified::Length;
 use url::Url;
 use util::str::{DOMString, LengthOrPercentageOrAuto};
 use uuid::Uuid;
-
+use webrender_traits::WebGLError;
 
 /// A trait to allow tracing (only) DOM objects.
 pub trait JSTraceable {
@@ -320,6 +320,8 @@ no_jsmanaged_fields!(AttrIdentifier);
 no_jsmanaged_fields!(AttrValue);
 no_jsmanaged_fields!(ElementSnapshot);
 no_jsmanaged_fields!(HttpsState);
+no_jsmanaged_fields!(SharedRt);
+no_jsmanaged_fields!(TouchpadPressurePhase);
 
 impl JSTraceable for ConstellationChan<ScriptMsg> {
     #[inline]

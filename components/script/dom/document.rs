@@ -41,6 +41,7 @@ use dom::element::{Element, ElementCreator};
 use dom::event::{Event, EventBubbles, EventCancelable};
 use dom::eventtarget::EventTarget;
 use dom::focusevent::FocusEvent;
+use dom::forcetouchevent::ForceTouchEvent;
 use dom::htmlanchorelement::HTMLAnchorElement;
 use dom::htmlappletelement::HTMLAppletElement;
 use dom::htmlareaelement::HTMLAreaElement;
@@ -77,6 +78,8 @@ use dom::touchlist::TouchList;
 use dom::treewalker::TreeWalker;
 use dom::uievent::UIEvent;
 use dom::window::{ReflowReason, Window};
+use encoding::EncodingRef;
+use encoding::all::UTF_8;
 use euclid::point::Point2D;
 use html5ever::tree_builder::{LimitedQuirks, NoQuirks, Quirks, QuirksMode};
 use ipc_channel::ipc::{self, IpcSender};
@@ -91,10 +94,12 @@ use net_traits::CookieSource::NonHTTP;
 use net_traits::response::HttpsState;
 use net_traits::{AsyncResponseTarget, PendingAsyncLoad};
 use num::ToPrimitive;
-use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable, ScriptChan};
+use script_runtime::ScriptChan;
+use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable};
+use script_traits::UntrustedNodeAddress;
 use script_traits::{AnimationState, MouseButton, MouseEventType, MozBrowserEvent};
 use script_traits::{ScriptMsg as ConstellationMsg, ScriptToCompositorMsg};
-use script_traits::{TouchEventType, TouchId};
+use script_traits::{TouchpadPressurePhase, TouchEventType, TouchId};
 use std::ascii::AsciiExt;
 use std::borrow::ToOwned;
 use std::boxed::FnBox;
@@ -112,8 +117,8 @@ use style::restyle_hints::ElementSnapshot;
 use style::servo::Stylesheet;
 use task_source::dom_manipulation::DOMManipulationTask;
 use time;
+use url::Url;
 use url::percent_encoding::percent_decode;
-use url::{Host, Url};
 use util::str::{DOMString, split_html_space_chars, str_join};
 
 #[derive(JSTraceable, PartialEq, HeapSizeOf)]
@@ -139,7 +144,7 @@ pub struct Document {
     location: MutNullableHeap<JS<Location>>,
     content_type: DOMString,
     last_modified: Option<String>,
-    encoding_name: DOMRefCell<DOMString>,
+    encoding: Cell<EncodingRef>,
     is_html_document: bool,
     url: Url,
     quirks_mode: Cell<QuirksMode>,
@@ -156,7 +161,7 @@ pub struct Document {
     anchors: MutNullableHeap<JS<HTMLCollection>>,
     applets: MutNullableHeap<JS<HTMLCollection>>,
     /// List of stylesheets associated with nodes in this document. |None| if the list needs to be refreshed.
-    stylesheets: DOMRefCell<Option<Vec<Arc<Stylesheet>>>>,
+    stylesheets: DOMRefCell<Option<Vec<(JS<Node>, Arc<Stylesheet>)>>>,
     /// Whether the list of stylesheets has changed since the last reflow was triggered.
     stylesheets_changed_since_reflow: Cell<bool>,
     ready_state: Cell<DocumentReadyState>,
@@ -215,6 +220,7 @@ pub struct Document {
     css_errors_store: DOMRefCell<Vec<CSSError>>,
     /// https://html.spec.whatwg.org/multipage/#concept-document-https-state
     https_state: Cell<HttpsState>,
+    touchpad_pressure_phase: Cell<TouchpadPressurePhase>,
 }
 
 #[derive(JSTraceable, HeapSizeOf)]
@@ -297,11 +303,6 @@ impl Document {
     }
 
     #[inline]
-    pub fn encoding_name(&self) -> Ref<DOMString> {
-        self.encoding_name.borrow()
-    }
-
-    #[inline]
     pub fn is_html_document(&self) -> bool {
         self.is_html_document
     }
@@ -359,7 +360,7 @@ impl Document {
         // that workable.
         match self.GetDocumentElement() {
             Some(root) => {
-                root.upcast::<Node>().get_has_dirty_descendants() ||
+                root.upcast::<Node>().has_dirty_descendants() ||
                 !self.modified_elements.borrow().is_empty()
             }
             None => false,
@@ -394,40 +395,12 @@ impl Document {
         }
     }
 
-    pub fn set_encoding_name(&self, name: DOMString) {
-        *self.encoding_name.borrow_mut() = DOMString::from(
-            match name.as_ref() {
-                "utf-8"         => "UTF-8",
-                "ibm866"        => "IBM866",
-                "iso-8859-2"    => "ISO-8859-2",
-                "iso-8859-3"    => "ISO-8859-3",
-                "iso-8859-4"    => "ISO-8859-4",
-                "iso-8859-5"    => "ISO-8859-5",
-                "iso-8859-6"    => "ISO-8859-6",
-                "iso-8859-7"    => "ISO-8859-7",
-                "iso-8859-8"    => "ISO-8859-8",
-                "iso-8859-8-i"  => "ISO-8859-8-I",
-                "iso-8859-10"   => "ISO-8859-10",
-                "iso-8859-13"   => "ISO-8859-13",
-                "iso-8859-14"   => "ISO-8859-14",
-                "iso-8859-15"   => "ISO-8859-15",
-                "iso-8859-16"   => "ISO-8859-16",
-                "koi8-r"        => "KOI8-R",
-                "koi8-u"        => "KOI8-U",
-                "gbk"           => "GBK",
-                "big5"          => "Big5",
-                "euc-jp"        => "EUC-JP",
-                "iso-2022-jp"   => "ISO-2022-JP",
-                "shift_jis"     => "Shift_JIS",
-                "euc-kr"        => "EUC-KR",
-                "utf-16be"      => "UTF-16BE",
-                "utf-16le"      => "UTF-16LE",
-                _               => &*name
-        });
+    pub fn encoding(&self) -> EncodingRef {
+        self.encoding.get()
     }
 
-    pub fn content_changed(&self, node: &Node, damage: NodeDamage) {
-        node.dirty(damage);
+    pub fn set_encoding(&self, encoding: EncodingRef) {
+        self.encoding.set(encoding);
     }
 
     pub fn content_and_heritage_changed(&self, node: &Node, damage: NodeDamage) {
@@ -762,6 +735,70 @@ impl Document {
                            ReflowReason::MouseEvent);
     }
 
+    pub fn handle_touchpad_pressure_event(&self,
+                                          js_runtime: *mut JSRuntime,
+                                          client_point: Point2D<f32>,
+                                          pressure: f32,
+                                          phase_now: TouchpadPressurePhase) {
+
+        let phase_before = self.touchpad_pressure_phase.get();
+        self.touchpad_pressure_phase.set(phase_now);
+
+        if phase_before == TouchpadPressurePhase::BeforeClick &&
+           phase_now == TouchpadPressurePhase::BeforeClick {
+            return;
+        }
+
+        let page_point = Point2D::new(client_point.x + self.window.PageXOffset() as f32,
+                                      client_point.y + self.window.PageYOffset() as f32);
+        let node = match self.window.hit_test_query(page_point, false) {
+            Some(node_address) => node::from_untrusted_node_address(js_runtime, node_address),
+            None => return
+        };
+
+        let el = match node.downcast::<Element>() {
+            Some(el) => Root::from_ref(el),
+            None => {
+                let parent = node.GetParentNode();
+                match parent.and_then(Root::downcast::<Element>) {
+                    Some(parent) => parent,
+                    None => return
+                }
+            },
+        };
+
+        let node = el.upcast::<Node>();
+        let target = node.upcast();
+
+        let force = match phase_now {
+            TouchpadPressurePhase::BeforeClick => pressure,
+            TouchpadPressurePhase::AfterFirstClick => 1. + pressure,
+            TouchpadPressurePhase::AfterSecondClick => 2. + pressure,
+        };
+
+        if phase_now != TouchpadPressurePhase::BeforeClick {
+            self.fire_forcetouch_event("servomouseforcechanged".to_owned(), target, force);
+        }
+
+        if phase_before != TouchpadPressurePhase::AfterSecondClick &&
+           phase_now == TouchpadPressurePhase::AfterSecondClick {
+            self.fire_forcetouch_event("servomouseforcedown".to_owned(), target, force);
+        }
+
+        if phase_before == TouchpadPressurePhase::AfterSecondClick &&
+           phase_now != TouchpadPressurePhase::AfterSecondClick {
+            self.fire_forcetouch_event("servomouseforceup".to_owned(), target, force);
+        }
+    }
+
+    fn fire_forcetouch_event(&self, event_name: String, target: &EventTarget, force: f32) {
+        let force_event = ForceTouchEvent::new(&self.window,
+                                               DOMString::from(event_name),
+                                               force);
+        let event = force_event.upcast::<Event>();
+        event.fire(target);
+    }
+
     pub fn fire_mouse_event(&self, client_point: Point2D<f32>, target: &EventTarget, event_name: String) {
         let client_x = client_point.x.to_i32().unwrap_or(0);
         let client_y = client_point.y.to_i32().unwrap_or(0);
@@ -866,7 +903,7 @@ impl Document {
             for element in new_target.upcast::<Node>()
                                      .inclusive_ancestors()
                                      .filter_map(Root::downcast::<Element>) {
-                if element.get_hover_state() {
+                if element.hover_state() {
                     break;
                 }
 
@@ -1494,6 +1531,25 @@ impl Document {
         let target = node.upcast();
         event.fire(target);
     }
+
+    /// https://html.spec.whatwg.org/multipage/#cookie-averse-document-object
+    fn is_cookie_averse(&self) -> bool {
+        /// https://url.spec.whatwg.org/#network-scheme
+        fn url_has_network_scheme(url: &Url) -> bool {
+            match &*url.scheme {
+                "ftp" | "http" | "https" => true,
+                _ => false,
+            }
+        }
+
+        self.browsing_context.is_none() || !url_has_network_scheme(&self.url)
+    }
+
+    pub fn nodes_from_point(&self, page_point: &Point2D<f32>) -> Vec<UntrustedNodeAddress> {
+        assert!(self.GetDocumentElement().is_some());
+
+        self.window.layout().nodes_from_point(*page_point)
+    }
 }
 
 #[derive(PartialEq, HeapSizeOf)]
@@ -1562,7 +1618,7 @@ impl Document {
             // https://dom.spec.whatwg.org/#concept-document-quirks
             quirks_mode: Cell::new(NoQuirks),
             // https://dom.spec.whatwg.org/#concept-document-encoding
-            encoding_name: DOMRefCell::new(DOMString::from("UTF-8")),
+            encoding: Cell::new(UTF_8),
             is_html_document: is_html_document == IsHTMLDocument::HTMLDocument,
             id_map: DOMRefCell::new(HashMap::new()),
             tag_map: DOMRefCell::new(HashMap::new()),
@@ -1604,6 +1660,7 @@ impl Document {
             dom_complete: Cell::new(Default::default()),
             css_errors_store: DOMRefCell::new(vec![]),
             https_state: Cell::new(HttpsState::None),
+            touchpad_pressure_phase: Cell::new(TouchpadPressurePhase::BeforeClick),
         }
     }
 
@@ -1663,11 +1720,11 @@ impl Document {
     }
 
     /// Returns the list of stylesheets associated with nodes in the document.
-    pub fn stylesheets(&self) -> Ref<Vec<Arc<Stylesheet>>> {
+    pub fn stylesheets(&self) -> Vec<Arc<Stylesheet>> {
         {
             let mut stylesheets = self.stylesheets.borrow_mut();
             if stylesheets.is_none() {
-                let new_stylesheets: Vec<Arc<Stylesheet>> = self.upcast::<Node>()
+                *stylesheets = Some(self.upcast::<Node>()
                     .traverse_preorder()
                     .filter_map(|node| {
                         if let Some(node) = node.downcast::<HTMLStyleElement>() {
@@ -1678,13 +1735,14 @@ impl Document {
                             node.get_stylesheet()
                         } else {
                             None
-                        }
+                        }.map(|stylesheet| (JS::from_rooted(&node), stylesheet))
                     })
-                    .collect();
-                *stylesheets = Some(new_stylesheets);
+                    .collect());
             };
         }
-        Ref::map(self.stylesheets.borrow(), |t| t.as_ref().unwrap())
+        self.stylesheets.borrow().as_ref().unwrap().iter()
+                        .map(|&(_, ref stylesheet)| stylesheet.clone())
+                        .collect()
     }
 
     /// https://html.spec.whatwg.org/multipage/#appropriate-template-contents-owner-document
@@ -1716,7 +1774,7 @@ impl Document {
         let mut map = self.modified_elements.borrow_mut();
         let snapshot = map.entry(JS::from_ref(el)).or_insert(ElementSnapshot::new());
         if snapshot.state.is_none() {
-            snapshot.state = Some(el.get_state());
+            snapshot.state = Some(el.state());
         }
     }
 
@@ -1744,7 +1802,7 @@ impl Element {
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLOptionElement)) |
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLSelectElement)) |
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTextAreaElement))
-                if self.get_disabled_state() => true,
+                if self.disabled_state() => true,
             _ => false,
         }
     }
@@ -1800,12 +1858,6 @@ impl DocumentMethods for Document {
     fn Domain(&self) -> DOMString {
         // TODO: This should use the effective script origin when it exists
         let origin = self.window.get_url();
-
-        if let Some(&Host::Ipv6(ipv6)) = origin.host() {
-            // Omit square brackets for IPv6 addresses.
-            return DOMString::from(ipv6.to_string());
-        }
-
         DOMString::from(origin.serialize_host().unwrap_or_else(|| "".to_owned()))
     }
 
@@ -1824,7 +1876,34 @@ impl DocumentMethods for Document {
 
     // https://dom.spec.whatwg.org/#dom-document-characterset
     fn CharacterSet(&self) -> DOMString {
-        self.encoding_name.borrow().clone()
+        DOMString::from(match self.encoding.get().name() {
+            "utf-8"         => "UTF-8",
+            "ibm866"        => "IBM866",
+            "iso-8859-2"    => "ISO-8859-2",
+            "iso-8859-3"    => "ISO-8859-3",
+            "iso-8859-4"    => "ISO-8859-4",
+            "iso-8859-5"    => "ISO-8859-5",
+            "iso-8859-6"    => "ISO-8859-6",
+            "iso-8859-7"    => "ISO-8859-7",
+            "iso-8859-8"    => "ISO-8859-8",
+            "iso-8859-8-i"  => "ISO-8859-8-I",
+            "iso-8859-10"   => "ISO-8859-10",
+            "iso-8859-13"   => "ISO-8859-13",
+            "iso-8859-14"   => "ISO-8859-14",
+            "iso-8859-15"   => "ISO-8859-15",
+            "iso-8859-16"   => "ISO-8859-16",
+            "koi8-r"        => "KOI8-R",
+            "koi8-u"        => "KOI8-U",
+            "gbk"           => "GBK",
+            "big5"          => "Big5",
+            "euc-jp"        => "EUC-JP",
+            "iso-2022-jp"   => "ISO-2022-JP",
+            "shift_jis"     => "Shift_JIS",
+            "euc-kr"        => "EUC-KR",
+            "utf-16be"      => "UTF-16BE",
+            "utf-16le"      => "UTF-16LE",
+            name            => name
+        })
     }
 
     // https://dom.spec.whatwg.org/#dom-document-charset
@@ -2344,8 +2423,8 @@ impl DocumentMethods for Document {
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-document-location
-    fn Location(&self) -> Root<Location> {
-        self.location.or_init(|| Location::new(&self.window))
+    fn GetLocation(&self) -> Option<Root<Location>> {
+        self.browsing_context().map(|_| self.location.or_init(|| Location::new(&self.window)))
     }
 
     // https://dom.spec.whatwg.org/#dom-parentnode-children
@@ -2402,7 +2481,10 @@ impl DocumentMethods for Document {
 
     // https://html.spec.whatwg.org/multipage/#dom-document-cookie
     fn GetCookie(&self) -> Fallible<DOMString> {
-        // TODO: return empty string for cookie-averse Document
+        if self.is_cookie_averse() {
+            return Ok(DOMString::new());
+        }
+
         let url = self.url();
         if !is_scheme_host_port_tuple(&url) {
             return Err(Error::Security);
@@ -2415,7 +2497,10 @@ impl DocumentMethods for Document {
 
     // https://html.spec.whatwg.org/multipage/#dom-document-cookie
     fn SetCookie(&self, cookie: DOMString) -> ErrorResult {
-        // TODO: ignore for cookie-averse Document
+        if self.is_cookie_averse() {
+            return Ok(());
+        }
+
         let url = self.url();
         if !is_scheme_host_port_tuple(url) {
             return Err(Error::Security);
@@ -2586,6 +2671,40 @@ impl DocumentMethods for Document {
             },
             None => self.GetDocumentElement()
         }
+    }
+
+    #[allow(unsafe_code)]
+    // https://drafts.csswg.org/cssom-view/#dom-document-elementsfrompoint
+    fn ElementsFromPoint(&self, x: Finite<f64>, y: Finite<f64>) -> Vec<Root<Element>> {
+        let x = *x as f32;
+        let y = *y as f32;
+        let point = &Point2D { x: x, y: y };
+        let window = window_from_node(self);
+        let viewport = window.window_size().unwrap().visible_viewport;
+
+        // Step 2
+        if x < 0.0 || y < 0.0 || x > viewport.width.get() || y > viewport.height.get() {
+            return vec!();
+        }
+
+        let js_runtime = unsafe { JS_GetRuntime(window.get_cx()) };
+
+        // Step 1 and Step 3
+        let mut elements: Vec<Root<Element>> = self.nodes_from_point(point).iter()
+            .flat_map(|&untrusted_node_address| {
+                let node = node::from_untrusted_node_address(js_runtime, untrusted_node_address);
+                Root::downcast::<Element>(node)
+        }).collect();
+
+        // Step 4
+        if let Some(root_element) = self.GetDocumentElement() {
+            if elements.last() != Some(&root_element) {
+                elements.push(root_element);
+            }
+        }
+
+        // Step 5
+        elements
     }
 }
 

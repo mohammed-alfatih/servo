@@ -11,6 +11,7 @@
 #![feature(custom_attribute)]
 #![feature(custom_derive)]
 #![feature(fnbox)]
+#![feature(iter_arith)]
 #![feature(mpsc_select)]
 #![feature(nonzero)]
 #![feature(on_unimplemented)]
@@ -58,6 +59,7 @@ extern crate phf;
 #[macro_use]
 extern crate profile_traits;
 extern crate rand;
+extern crate range;
 extern crate ref_filter_map;
 extern crate ref_slice;
 extern crate regex;
@@ -75,6 +77,7 @@ extern crate url;
 #[macro_use]
 extern crate util;
 extern crate uuid;
+extern crate webrender_traits;
 extern crate websocket;
 extern crate xml5ever;
 
@@ -90,6 +93,7 @@ mod network_listener;
 pub mod page;
 pub mod parse;
 pub mod reporter;
+pub mod script_runtime;
 #[allow(unsafe_code)]
 pub mod script_thread;
 mod task_source;

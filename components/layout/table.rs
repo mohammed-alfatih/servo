@@ -12,8 +12,8 @@ use block::{ISizeConstraintInput, ISizeConstraintSolution};
 use context::LayoutContext;
 use display_list_builder::{BlockFlowDisplayListBuilding, BorderPaintingMode, DisplayListBuildState};
 use euclid::Point2D;
-use flow::{BaseFlow, IMPACTED_BY_RIGHT_FLOATS, ImmutableFlowUtils, OpaqueFlow};
-use flow::{self, EarlyAbsolutePositionInfo, Flow, FlowClass, IMPACTED_BY_LEFT_FLOATS};
+use flow::{BaseFlow, EarlyAbsolutePositionInfo, Flow, FlowClass, ImmutableFlowUtils, OpaqueFlow};
+use flow::{self};
 use flow_list::MutFlowListIterator;
 use fragment::{Fragment, FragmentBorderBoxIterator, Overflow};
 use gfx::display_list::{StackingContext, StackingContextId};
@@ -25,7 +25,7 @@ use std::fmt;
 use std::sync::Arc;
 use style::computed_values::{border_collapse, border_spacing, table_layout};
 use style::logical_geometry::LogicalSize;
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style::values::CSSFloat;
 use style::values::computed::LengthOrPercentageOrAuto;
 use table_row::{TableRowFlow};
@@ -230,7 +230,7 @@ impl Flow for TableFlow {
         // part of the table, which we don't want to do—it belongs to the table wrapper instead.
 
         // Get column inline sizes from colgroups
-        for kid in self.block_flow.base.child_iter().filter(|kid| kid.is_table_colgroup()) {
+        for kid in self.block_flow.base.child_iter_mut().filter(|kid| kid.is_table_colgroup()) {
             for specified_inline_size in &kid.as_mut_table_colgroup().inline_sizes {
                 self.column_intrinsic_inline_sizes.push(ColumnIntrinsicInlineSize {
                     minimum_length: match *specified_inline_size {
@@ -392,10 +392,6 @@ impl Flow for TableFlow {
             }
         }
 
-        // As tables are always wrapped inside a table wrapper, they are never impacted by floats.
-        self.block_flow.base.flags.remove(IMPACTED_BY_LEFT_FLOATS);
-        self.block_flow.base.flags.remove(IMPACTED_BY_RIGHT_FLOATS);
-
         let column_computed_inline_sizes = &self.column_computed_inline_sizes;
         let collapsed_inline_direction_border_widths_for_table =
             &self.collapsed_inline_direction_border_widths_for_table;
@@ -472,7 +468,7 @@ impl Flow for TableFlow {
         self.block_flow.collect_stacking_contexts(parent_id, contexts)
     }
 
-    fn repair_style(&mut self, new_style: &Arc<ComputedValues>) {
+    fn repair_style(&mut self, new_style: &Arc<ServoComputedValues>) {
         self.block_flow.repair_style(new_style)
     }
 
@@ -708,7 +704,7 @@ impl TableLikeFlow for BlockFlow {
 
             // At this point, `current_block_offset` is at the content edge of our box. Now iterate
             // over children.
-            for kid in self.base.child_iter() {
+            for kid in self.base.child_iter_mut() {
                 // Account for spacing or collapsed borders.
                 if kid.is_table_row() {
                     has_rows = true;
@@ -766,7 +762,7 @@ impl TableLikeFlow for BlockFlow {
 
             // Write in the size of the relative containing block for children. (This information
             // is also needed to handle RTL.)
-            for kid in self.base.child_iter() {
+            for kid in self.base.child_iter_mut() {
                 flow::mut_base(kid).early_absolute_position_info = EarlyAbsolutePositionInfo {
                     relative_containing_block_size: self.fragment.content_box().size,
                     relative_containing_block_mode: self.fragment.style().writing_mode,
@@ -805,7 +801,7 @@ struct TableRowIterator<'a> {
 impl<'a> TableRowIterator<'a> {
     fn new(base: &'a mut BaseFlow) -> Self {
         TableRowIterator {
-            kids: base.child_iter(),
+            kids: base.child_iter_mut(),
             grandkids: None,
         }
     }
@@ -826,7 +822,7 @@ impl<'a> Iterator for TableRowIterator<'a> {
         match self.kids.next() {
             Some(kid) => {
                 if kid.is_table_rowgroup() {
-                    self.grandkids = Some(flow::mut_base(kid).child_iter());
+                    self.grandkids = Some(flow::mut_base(kid).child_iter_mut());
                     self.next()
                 } else if kid.is_table_row() {
                     Some(kid.as_mut_table_row())

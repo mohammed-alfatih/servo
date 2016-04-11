@@ -81,7 +81,7 @@ enum DocumentReadyState { "loading", "interactive", "complete" };
 partial /*sealed*/ interface Document {
   // resource metadata management
   [/*PutForwards=href, */Unforgeable]
-  readonly attribute Location/*?*/ location;
+  readonly attribute Location? location;
   readonly attribute DOMString domain;
   // readonly attribute DOMString referrer;
   [Throws]
@@ -184,6 +184,12 @@ partial interface Document {
 // https://drafts.csswg.org/cssom-view/#dom-document-elementfrompoint
 partial interface Document {
   Element? elementFromPoint(double x, double y);
+  sequence<Element> elementsFromPoint(double x, double y);
+};
+
+// https://drafts.csswg.org/cssom/#extensions-to-the-document-interface
+partial interface Document {
+  [SameObject] readonly attribute StyleSheetList styleSheets;
 };
 
 // https://drafts.csswg.org/cssom/#extensions-to-the-document-interface

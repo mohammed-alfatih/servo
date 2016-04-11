@@ -34,6 +34,7 @@ use hyper::mime::{Attr, Mime};
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 use msg::constellation_msg::{PipelineId};
 use serde::{Deserializer, Serializer};
+use std::sync::mpsc::Sender;
 use std::thread;
 use url::Url;
 use websocket::header;
@@ -336,9 +337,18 @@ impl Metadata {
 
     /// Extract the parts of a Mime that we care about.
     pub fn set_content_type(&mut self, content_type: Option<&Mime>) {
+        match self.headers {
+            None => self.headers = Some(Headers::new()),
+            Some(_) => (),
+        }
+
         match content_type {
             None => (),
             Some(mime) => {
+                if let Some(headers) = self.headers.as_mut() {
+                    headers.set(ContentType(mime.clone()));
+                }
+
                 self.content_type = Some(ContentType(mime.clone()));
                 let &Mime(_, _, ref parameters) = mime;
                 for &(ref k, ref v) in parameters {
@@ -398,3 +408,8 @@ pub fn unwrap_websocket_protocol(wsp: Option<&header::WebSocketProtocol>) -> Opt
 /// An unique identifier to keep track of each load message in the resource handler
 #[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
 pub struct ResourceId(pub u32);
+
+pub enum ConstellationMsg {
+    /// Queries whether a pipeline or its ancestors are private
+    IsPrivate(PipelineId, Sender<bool>),
+}

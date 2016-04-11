@@ -25,17 +25,18 @@ use dom::node::{ChildrenMutation, CloneChildrenFlag, Node};
 use dom::node::{document_from_node, window_from_node};
 use dom::virtualmethods::VirtualMethods;
 use dom::window::ScriptHelpers;
-use encoding::all::UTF_8;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::types::{DecoderTrap, Encoding, EncodingRef};
 use html5ever::tree_builder::NextParserState;
+use hyper::http::RawStatus;
 use ipc_channel::ipc;
 use ipc_channel::router::ROUTER;
 use js::jsapi::RootedValue;
 use js::jsval::UndefinedValue;
 use net_traits::{AsyncResponseListener, AsyncResponseTarget, Metadata};
 use network_listener::{NetworkListener, PreInvoke};
-use script_thread::{MainThreadScriptChan, ScriptChan};
+use script_runtime::ScriptChan;
+use script_thread::MainThreadScriptChan;
 use std::ascii::AsciiExt;
 use std::cell::Cell;
 use std::mem;
@@ -71,7 +72,7 @@ pub struct HTMLScriptElement {
 
     #[ignore_heap_size_of = "Defined in rust-encoding"]
     /// https://html.spec.whatwg.org/multipage/#concept-script-encoding
-    block_character_encoding: DOMRefCell<EncodingRef>,
+    block_character_encoding: Cell<Option<EncodingRef>>,
 }
 
 impl HTMLScriptElement {
@@ -86,7 +87,7 @@ impl HTMLScriptElement {
             ready_to_be_parser_executed: Cell::new(false),
             parser_document: JS::from_ref(document),
             load: DOMRefCell::new(None),
-            block_character_encoding: DOMRefCell::new(UTF_8 as EncodingRef),
+            block_character_encoding: Cell::new(None),
         }
     }
 
@@ -136,20 +137,35 @@ struct ScriptContext {
     metadata: Option<Metadata>,
     /// The initial URL requested.
     url: Url,
+    /// Indicates whether the request failed, and why
+    status: Result<(), String>
 }
 
 impl AsyncResponseListener for ScriptContext {
     fn headers_available(&mut self, metadata: Metadata) {
+        let status_code = match metadata.status {
+            Some(RawStatus(c, _)) => c,
+            _ => 0
+        };
+
+        self.status = match status_code {
+            0 => Err("No http status code received".to_owned()),
+            200...299 => Ok(()), // HTTP ok status codes
+            _ => Err(format!("HTTP error code {}", status_code))
+        };
+
         self.metadata = Some(metadata);
     }
 
     fn data_available(&mut self, payload: Vec<u8>) {
-        let mut payload = payload;
-        self.data.append(&mut payload);
+        if self.status.is_ok() {
+            let mut payload = payload;
+            self.data.append(&mut payload);
+        }
     }
 
     fn response_complete(&mut self, status: Result<(), String>) {
-        let load = status.map(|_| {
+        let load = status.and(self.status.clone()).map(|_| {
             let data = mem::replace(&mut self.data, vec!());
             let metadata = self.metadata.take().unwrap();
             (metadata, data)
@@ -248,7 +264,7 @@ impl HTMLScriptElement {
         // Step 13.
         if let Some(ref charset) = element.get_attribute(&ns!(), &atom!("charset")) {
             if let Some(encodingRef) = encoding_from_whatwg_label(&charset.Value()) {
-                *self.block_character_encoding.borrow_mut() = encodingRef;
+                self.block_character_encoding.set(Some(encodingRef));
             }
         }
 
@@ -292,6 +308,7 @@ impl HTMLScriptElement {
                     data: vec!(),
                     metadata: None,
                     url: url.clone(),
+                    status: Ok(())
                 }));
 
                 let (action_sender, action_receiver) = ipc::channel().unwrap();
@@ -391,10 +408,16 @@ impl HTMLScriptElement {
 
             // Step 2.b.1.a.
             ScriptOrigin::External(Ok((metadata, bytes))) => {
-                // TODO(#9185): implement encoding determination.
-                (DOMString::from(UTF_8.decode(&*bytes, DecoderTrap::Replace).unwrap()),
-                 true,
-                 metadata.final_url)
+                debug!("loading external script, url = {}", metadata.final_url);
+
+                let encoding = metadata.charset
+                    .and_then(|encoding| encoding_from_whatwg_label(&encoding))
+                    .or_else(|| self.block_character_encoding.get())
+                    .unwrap_or_else(|| self.parser_document.encoding());
+
+                (DOMString::from(encoding.decode(&*bytes, DecoderTrap::Replace).unwrap()),
+                    true,
+                    metadata.final_url)
             },
 
             // Step 2.b.1.c.
@@ -594,6 +617,31 @@ impl HTMLScriptElementMethods for HTMLScriptElement {
     make_url_getter!(Src, "src");
     // https://html.spec.whatwg.org/multipage/#dom-script-src
     make_setter!(SetSrc, "src");
+
+    // https://html.spec.whatwg.org/multipage/#dom-script-type
+    make_getter!(Type, "type");
+    // https://html.spec.whatwg.org/multipage/#dom-script-type
+    make_setter!(SetType, "type");
+
+    // https://html.spec.whatwg.org/multipage/#dom-script-charset
+    make_getter!(Charset, "charset");
+    // https://html.spec.whatwg.org/multipage/#dom-script-charset
+    make_setter!(SetCharset, "charset");
+
+    // https://html.spec.whatwg.org/multipage/#dom-script-defer
+    make_bool_getter!(Defer, "defer");
+    // https://html.spec.whatwg.org/multipage/#dom-script-defer
+    make_bool_setter!(SetDefer, "defer");
+
+    // https://html.spec.whatwg.org/multipage/#dom-script-event
+    make_getter!(Event, "event");
+    // https://html.spec.whatwg.org/multipage/#dom-script-event
+    make_setter!(SetEvent, "event");
+
+    // https://html.spec.whatwg.org/multipage/#dom-script-htmlfor
+    make_getter!(HtmlFor, "for");
+    // https://html.spec.whatwg.org/multipage/#dom-script-htmlfor
+    make_setter!(SetHtmlFor, "for");
 
     // https://html.spec.whatwg.org/multipage/#dom-script-text
     fn Text(&self) -> DOMString {

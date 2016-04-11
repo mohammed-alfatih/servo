@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(style, "Mako-0.9.1.zip"))
 from mako.template import Template
 
 template = Template(filename=os.path.join(style, "properties.mako.rs"), input_encoding='utf8')
-template.render()
+template.render(PRODUCT='servo')
 properties = dict(
     (p.name, {
         "flag": p.experimental,
@@ -21,4 +21,21 @@ properties = dict(
     })
     for p in template.module.LONGHANDS + template.module.SHORTHANDS
 )
-print(json.dumps(properties, indent=4))
+
+json_dump = json.dumps(properties, indent=4)
+
+#
+# Resolve path to doc directory and write CSS properties and JSON.
+#
+servo_doc_path = os.path.abspath(os.path.join(style, '../', '../', 'target', 'doc', 'servo'))
+
+# Ensure ./target/doc/servo exists
+if not os.path.exists(servo_doc_path):
+    os.makedirs(servo_doc_path)
+
+with open(os.path.join(servo_doc_path, 'css-properties.json'), "w") as out_file:
+    out_file.write(json_dump)
+
+html_template = Template(filename=os.path.join(style, "properties.html.mako"), input_encoding='utf8')
+with open(os.path.join(servo_doc_path, 'css-properties.html'), "w") as out_file:
+    out_file.write(html_template.render(properties=properties))

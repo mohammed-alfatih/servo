@@ -37,6 +37,7 @@ use gfx::text::glyph::CharIndex;
 use incremental::RestyleDamage;
 use msg::constellation_msg::PipelineId;
 use opaque_node::OpaqueNodeMethods;
+use range::{Range, RangeIndex};
 use script::dom::attr::AttrValue;
 use script::dom::bindings::inheritance::{Castable, CharacterDataTypeId, ElementTypeId};
 use script::dom::bindings::inheritance::{HTMLElementTypeId, NodeTypeId};
@@ -66,7 +67,7 @@ use style::computed_values::content::ContentItem;
 use style::computed_values::{content, display};
 use style::dom::{TDocument, TElement, TNode, UnsafeNode};
 use style::element_state::*;
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style::properties::{PropertyDeclaration, PropertyDeclarationBlock};
 use style::restyle_hints::ElementSnapshot;
 use style::selector_impl::{NonTSPseudoClass, PseudoElement, ServoSelectorImpl};
@@ -131,6 +132,7 @@ impl<'ln> ServoLayoutNode<'ln> {
 }
 
 impl<'ln> TNode for ServoLayoutNode<'ln> {
+    type ConcreteComputedValues = ServoComputedValues;
     type ConcreteElement = ServoLayoutElement<'ln>;
     type ConcreteDocument = ServoLayoutDocument<'ln>;
     type ConcreteRestyleDamage = RestyleDamage;
@@ -615,6 +617,8 @@ pub enum PseudoElementType<T> {
     Normal,
     Before(T),
     After(T),
+    DetailsSummary(T),
+    DetailsContent(T),
 }
 
 impl<T> PseudoElementType<T> {
@@ -625,11 +629,20 @@ impl<T> PseudoElementType<T> {
         }
     }
 
+    pub fn is_before_or_after(&self) -> bool {
+        match *self {
+            PseudoElementType::Before(_) | PseudoElementType::After(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn strip(&self) -> PseudoElementType<()> {
         match *self {
             PseudoElementType::Normal => PseudoElementType::Normal,
             PseudoElementType::Before(_) => PseudoElementType::Before(()),
             PseudoElementType::After(_) => PseudoElementType::After(()),
+            PseudoElementType::DetailsSummary(_) => PseudoElementType::DetailsSummary(()),
+            PseudoElementType::DetailsContent(_) => PseudoElementType::DetailsContent(()),
         }
     }
 }
@@ -637,7 +650,7 @@ impl<T> PseudoElementType<T> {
 /// A thread-safe version of `LayoutNode`, used during flow construction. This type of layout
 /// node does not allow any parents or siblings of nodes to be accessed, to avoid races.
 
-pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
+pub trait ThreadSafeLayoutNode : Clone + Copy + Sized + PartialEq {
     type ConcreteThreadSafeLayoutElement: ThreadSafeLayoutElement<ConcreteThreadSafeLayoutNode = Self>;
     type ChildrenIterator: Iterator<Item = Self> + Sized;
 
@@ -658,6 +671,9 @@ pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
 
     /// Returns an iterator over this node's children.
     fn children(&self) -> Self::ChildrenIterator;
+
+    #[inline]
+    fn is_element(&self) -> bool { if let Some(NodeTypeId::Element(_)) = self.type_id() { true } else { false } }
 
     /// If this is an element, accesses the element data. Fails if this is not an element node.
     #[inline]
@@ -686,6 +702,41 @@ pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
             })
     }
 
+    // TODO(emilio): Since the ::-details-* pseudos are internal, just affecting one element, and
+    // only changing `display` property when the element `open` attribute changes, this should be
+    // eligible for not being cascaded eagerly, reading the display property from layout instead.
+    #[inline]
+    fn get_details_summary_pseudo(&self) -> Option<Self> {
+        if self.is_element() &&
+           self.as_element().get_local_name() == &atom!("details") &&
+           self.as_element().get_namespace() == &ns!(html) {
+            self.borrow_layout_data().unwrap()
+                .style_data.per_pseudo
+                .get(&PseudoElement::DetailsSummary)
+                .map(|style| {
+                    self.with_pseudo(PseudoElementType::DetailsSummary(style.get_box().display))
+                })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn get_details_content_pseudo(&self) -> Option<Self> {
+        if self.is_element() &&
+           self.as_element().get_local_name() == &atom!("details") &&
+           self.as_element().get_namespace() == &ns!(html) {
+            self.borrow_layout_data().unwrap()
+                .style_data.per_pseudo
+                .get(&PseudoElement::DetailsContent)
+                .map(|style| {
+                    self.with_pseudo(PseudoElementType::DetailsContent(style.get_box().display))
+                })
+        } else {
+            None
+        }
+    }
+
     /// Borrows the layout data immutably. Fails on a conflicting borrow.
     ///
     /// TODO(pcwalton): Make this private. It will let us avoid borrow flag checks in some cases.
@@ -703,14 +754,23 @@ pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
     ///
     /// Unlike the version on TNode, this handles pseudo-elements.
     #[inline]
-    fn style(&self) -> Ref<Arc<ComputedValues>> {
+    fn style(&self) -> Ref<Arc<ServoComputedValues>> {
         Ref::map(self.borrow_layout_data().unwrap(), |data| {
             let style = match self.get_pseudo_element_type() {
                 PseudoElementType::Before(_) => data.style_data.per_pseudo.get(&PseudoElement::Before),
                 PseudoElementType::After(_) => data.style_data.per_pseudo.get(&PseudoElement::After),
+                PseudoElementType::DetailsSummary(_) => data.style_data.per_pseudo.get(&PseudoElement::DetailsSummary),
+                PseudoElementType::DetailsContent(_) => data.style_data.per_pseudo.get(&PseudoElement::DetailsContent),
                 PseudoElementType::Normal => data.style_data.style.as_ref(),
             };
             style.unwrap()
+        })
+    }
+
+    #[inline]
+    fn selected_style(&self) -> Ref<Arc<ServoComputedValues>> {
+        Ref::map(self.borrow_layout_data().unwrap(), |data| {
+            data.style_data.per_pseudo.get(&PseudoElement::Selection).unwrap_or(data.style_data.style.as_ref().unwrap())
         })
     }
 
@@ -727,6 +787,13 @@ pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
             PseudoElementType::After(_) => {
                 data.style_data.per_pseudo.remove(&PseudoElement::After);
             }
+            PseudoElementType::DetailsSummary(_) => {
+                data.style_data.per_pseudo.remove(&PseudoElement::DetailsSummary);
+            }
+            PseudoElementType::DetailsContent(_) => {
+                data.style_data.per_pseudo.remove(&PseudoElement::DetailsContent);
+            }
+
             PseudoElementType::Normal => {
                 data.style_data.style = None;
             }
@@ -770,7 +837,7 @@ pub trait ThreadSafeLayoutNode : Clone + Copy + Sized {
     fn text_content(&self) -> TextContent;
 
     /// If the insertion point is within this node, returns it. Otherwise, returns `None`.
-    fn insertion_point(&self) -> Option<CharIndex>;
+    fn selection(&self) -> Option<Range<CharIndex>>;
 
     /// If this is an image element, returns its URL. If this is not an image element, fails.
     ///
@@ -798,6 +865,12 @@ pub trait ThreadSafeLayoutElement: Clone + Copy + Sized {
 
     #[inline]
     fn get_attr<'a>(&'a self, namespace: &Namespace, name: &Atom) -> Option<&'a str>;
+
+    #[inline]
+    fn get_local_name(&self) -> &Atom;
+
+    #[inline]
+    fn get_namespace(&self) -> &Namespace;
 }
 
 #[derive(Copy, Clone)]
@@ -808,7 +881,15 @@ pub struct ServoThreadSafeLayoutNode<'ln> {
     pseudo: PseudoElementType<display::T>,
 }
 
+impl<'a> PartialEq for ServoThreadSafeLayoutNode<'a> {
+    #[inline]
+    fn eq(&self, other: &ServoThreadSafeLayoutNode<'a>) -> bool {
+        self.node == other.node
+    }
+}
+
 impl<'ln> DangerousThreadSafeLayoutNode for ServoThreadSafeLayoutNode<'ln> {
+
     unsafe fn dangerous_first_child(&self) -> Option<Self> {
             self.get_jsmanaged().first_child_ref()
                 .map(|node| self.new_with_this_lifetime(&node))
@@ -944,7 +1025,7 @@ impl<'ln> ThreadSafeLayoutNode for ServoThreadSafeLayoutNode<'ln> {
     }
 
     fn text_content(&self) -> TextContent {
-        if self.pseudo != PseudoElementType::Normal {
+        if self.pseudo.is_before_or_after() {
             let data = &self.borrow_layout_data().unwrap().style_data;
 
             let style = if self.pseudo.is_before() {
@@ -953,7 +1034,7 @@ impl<'ln> ThreadSafeLayoutNode for ServoThreadSafeLayoutNode<'ln> {
                 data.per_pseudo.get(&PseudoElement::After).unwrap()
             };
 
-            return match style.as_ref().get_box().content {
+            return match style.as_ref().get_counters().content {
                 content::T::Content(ref value) if !value.is_empty() => {
                     TextContent::GeneratedContent((*value).clone())
                 }
@@ -980,21 +1061,24 @@ impl<'ln> ThreadSafeLayoutNode for ServoThreadSafeLayoutNode<'ln> {
         panic!("not text!")
     }
 
-    fn insertion_point(&self) -> Option<CharIndex> {
+    fn selection(&self) -> Option<Range<CharIndex>> {
         let this = unsafe {
             self.get_jsmanaged()
         };
 
         if let Some(area) = this.downcast::<HTMLTextAreaElement>() {
-            if let Some(insertion_point) = unsafe { area.get_absolute_insertion_point_for_layout() } {
+            if let Some(selection) = unsafe { area.get_absolute_selection_for_layout() } {
                 let text = unsafe { area.get_value_for_layout() };
-                return Some(CharIndex(search_index(insertion_point, text.char_indices())));
+                let begin_byte = selection.begin();
+                let begin = search_index(begin_byte, text.char_indices());
+                let length = search_index(selection.length(), text[begin_byte..].char_indices());
+                return Some(Range::new(CharIndex(begin), CharIndex(length)));
             }
         }
         if let Some(input) = this.downcast::<HTMLInputElement>() {
-            let insertion_point_index = unsafe { input.get_insertion_point_index_for_layout() };
-            if let Some(insertion_point_index) = insertion_point_index {
-                return Some(CharIndex(insertion_point_index));
+            if let Some(selection) = unsafe { input.get_selection_for_layout() } {
+                return Some(Range::new(CharIndex(selection.begin()),
+                                       CharIndex(selection.length())));
             }
         }
         None
@@ -1041,9 +1125,12 @@ impl<ConcreteNode> ThreadSafeLayoutNodeChildrenIterator<ConcreteNode>
     pub fn new(parent: ConcreteNode) -> Self {
         let first_child: Option<ConcreteNode> = match parent.get_pseudo_element_type() {
             PseudoElementType::Normal => {
-                parent.get_before_pseudo().or_else(|| {
+                parent.get_before_pseudo().or_else(|| parent.get_details_summary_pseudo()).or_else(|| {
                     unsafe { parent.dangerous_first_child() }
                 })
+            },
+            PseudoElementType::DetailsContent(_) | PseudoElementType::DetailsSummary(_) => {
+                unsafe { parent.dangerous_first_child() }
             },
             _ => None,
         };
@@ -1058,29 +1145,73 @@ impl<ConcreteNode> Iterator for ThreadSafeLayoutNodeChildrenIterator<ConcreteNod
                             where ConcreteNode: DangerousThreadSafeLayoutNode {
     type Item = ConcreteNode;
     fn next(&mut self) -> Option<ConcreteNode> {
-        let node = self.current_node.clone();
+        match self.parent_node.get_pseudo_element_type() {
+            PseudoElementType::Before(_) | PseudoElementType::After(_) => None,
 
-        if let Some(ref node) = node {
-            self.current_node = match node.get_pseudo_element_type() {
-                PseudoElementType::Before(_) => {
-                    match unsafe { self.parent_node.dangerous_first_child() } {
-                        Some(first) => Some(first),
-                        None => self.parent_node.get_after_pseudo(),
+            PseudoElementType::DetailsSummary(_) => {
+                let mut current_node = self.current_node.clone();
+                loop {
+                    let next_node = if let Some(ref node) = current_node {
+                        if node.is_element() &&
+                                node.as_element().get_local_name() == &atom!("summary") &&
+                                node.as_element().get_namespace() == &ns!(html) {
+                            self.current_node = None;
+                            return Some(node.clone());
+                        }
+                        unsafe { node.dangerous_next_sibling() }
+                    } else {
+                        self.current_node = None;
+                        return None
+                    };
+                    current_node = next_node;
+                }
+            }
+
+            PseudoElementType::DetailsContent(_) => {
+                let node = self.current_node.clone();
+                let node = node.and_then(|node| {
+                    if node.is_element() &&
+                       node.as_element().get_local_name() == &atom!("summary") &&
+                       node.as_element().get_namespace() == &ns!(html) {
+                        unsafe { node.dangerous_next_sibling() }
+                    } else {
+                        Some(node)
                     }
-                },
-                PseudoElementType::Normal => {
-                    match unsafe { node.dangerous_next_sibling() } {
-                        Some(next) => Some(next),
-                        None => self.parent_node.get_after_pseudo(),
-                    }
-                },
-                PseudoElementType::After(_) => {
-                    None
-                },
-            };
+                });
+                self.current_node = node.and_then(|node| unsafe { node.dangerous_next_sibling() });
+                node
+            }
+
+            PseudoElementType::Normal => {
+                let node = self.current_node.clone();
+                if let Some(ref node) = node {
+                    self.current_node = match node.get_pseudo_element_type() {
+                        PseudoElementType::Before(_) => {
+                            let first = self.parent_node.get_details_summary_pseudo().or_else(|| unsafe {
+                                self.parent_node.dangerous_first_child()
+                            });
+                            match first {
+                                Some(first) => Some(first),
+                                None => self.parent_node.get_after_pseudo(),
+                            }
+                        },
+                        PseudoElementType::Normal => {
+                            match unsafe { node.dangerous_next_sibling() } {
+                                Some(next) => Some(next),
+                                None => self.parent_node.get_after_pseudo(),
+                            }
+                        },
+                        PseudoElementType::DetailsSummary(_) => self.parent_node.get_details_content_pseudo(),
+                        PseudoElementType::DetailsContent(_) => self.parent_node.get_after_pseudo(),
+                        PseudoElementType::After(_) => {
+                            None
+                        },
+                    };
+                }
+                node
+            }
+
         }
-
-        node
     }
 }
 
@@ -1098,6 +1229,16 @@ impl<'le> ThreadSafeLayoutElement for ServoThreadSafeLayoutElement<'le> {
         unsafe {
             self.element.get_attr_val_for_layout(namespace, name)
         }
+    }
+
+    #[inline]
+    fn get_local_name(&self) -> &Atom {
+        self.element.local_name()
+    }
+
+    #[inline]
+    fn get_namespace(&self) -> &Namespace {
+        self.element.namespace()
     }
 }
 

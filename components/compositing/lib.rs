@@ -41,6 +41,7 @@ extern crate num;
 extern crate offscreen_gl_context;
 #[macro_use]
 extern crate profile_traits;
+extern crate rand;
 extern crate script_traits;
 extern crate serde;
 extern crate style_traits;
@@ -67,7 +68,6 @@ mod compositor_layer;
 pub mod compositor_thread;
 pub mod constellation;
 mod delayed_composition;
-mod headless;
 pub mod pipeline;
 #[cfg(not(target_os = "windows"))]
 pub mod sandboxing;

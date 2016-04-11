@@ -2,25 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#![feature(alloc)]
 #![feature(box_syntax)]
 #![feature(core_intrinsics)]
 #![feature(custom_derive)]
 #![cfg_attr(feature = "non-geckolib", feature(decode_utf16))]
-#![feature(fnbox)]
 #![feature(optin_builtin_traits)]
 #![feature(plugin)]
+#![feature(panic_handler)]
 #![feature(reflect_marker)]
 #![feature(step_by)]
 
 #![plugin(heapsize_plugin, plugins, serde_macros)]
 
-extern crate alloc;
+#![deny(unsafe_code)]
+
 extern crate app_units;
 #[macro_use]
 extern crate bitflags;
-#[macro_use]
-extern crate cssparser;
 extern crate deque;
 extern crate euclid;
 extern crate getopts;
@@ -36,35 +34,41 @@ extern crate log;
 extern crate num_cpus;
 extern crate rand;
 extern crate rustc_serialize;
-extern crate selectors;
 extern crate serde;
 extern crate smallvec;
 extern crate string_cache;
 extern crate url;
-extern crate uuid;
 
 use std::sync::Arc;
 
 pub mod cache;
+#[allow(unsafe_code)]
 pub mod debug_utils;
 pub mod geometry;
+#[allow(unsafe_code)]
 pub mod ipc;
 pub mod linked_list;
 #[cfg(feature = "non-geckolib")]
+#[allow(unsafe_code)]
 pub mod non_geckolib;
+#[allow(unsafe_code)]
 pub mod opts;
+#[allow(unsafe_code)]
 pub mod prefs;
 pub mod print_tree;
+#[allow(unsafe_code)]
 pub mod resource_files;
+#[allow(unsafe_code)]
 pub mod str;
 pub mod thread;
 pub mod thread_state;
-pub mod threadpool;
 pub mod tid;
 pub mod time;
 pub mod vec;
+#[allow(unsafe_code)]
 pub mod workqueue;
 
+#[allow(unsafe_code)]
 pub fn breakpoint() {
     unsafe { ::std::intrinsics::breakpoint() };
 }

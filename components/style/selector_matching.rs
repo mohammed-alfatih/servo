@@ -83,26 +83,47 @@ lazy_static! {
     };
 }
 
+/// This structure holds all the selectors and device characteristics
+/// for a given document. The selectors are converted into `Rule`s
+/// (defined in rust-selectors), and introduced in a `SelectorMap`
+/// depending on the pseudo-element (see `PerPseudoElementSelectorMap`),
+/// stylesheet origin (see `PerOriginSelectorMap`), and priority
+/// (see the `normal` and `important` fields in `PerOriginSelectorMap`).
+///
+/// This structure is effectively created once per pipeline, in the
+/// LayoutThread corresponding to that pipeline.
+///
+/// The stylist is parameterized on `SelectorImplExt`, a trait that extends
+/// `selectors::parser::SelectorImpl`, and that allows to customise what
+/// pseudo-classes and pseudo-elements are parsed. This is actually either
+/// `ServoSelectorImpl`, the implementation used by Servo's layout system in
+/// regular builds, or `GeckoSelectorImpl`, the implementation used in the
+/// geckolib port.
+#[derive(HeapSizeOf)]
 pub struct Stylist<Impl: SelectorImplExt> {
-    // Device that the stylist is currently evaluating against.
+    /// Device that the stylist is currently evaluating against.
     pub device: Device,
 
-    // Viewport constraints based on the current device.
+    /// Viewport constraints based on the current device.
     viewport_constraints: Option<ViewportConstraints>,
 
-    // If true, the quirks-mode stylesheet is applied.
+    /// If true, the quirks-mode stylesheet is applied.
     quirks_mode: bool,
 
-    // If true, the device has changed, and the stylist needs to be updated.
+    /// If true, the device has changed, and the stylist needs to be updated.
     is_device_dirty: bool,
 
-    // The current selector maps, after evaluating media
-    // rules against the current device.
+    /// The current selector maps, after evaluating media
+    /// rules against the current device.
     element_map: PerPseudoElementSelectorMap<Impl>,
-    pseudos_map: HashMap<Impl::PseudoElement, PerPseudoElementSelectorMap<Impl>, BuildHasherDefault<::fnv::FnvHasher>>,
+    /// The selector maps corresponding to a given pseudo-element
+    /// (depending on the implementation)
+    pseudos_map: HashMap<Impl::PseudoElement,
+                         PerPseudoElementSelectorMap<Impl>,
+                         BuildHasherDefault<::fnv::FnvHasher>>,
     rules_source_order: usize,
 
-    // Selector dependencies used to compute restyle hints.
+    /// Selector dependencies used to compute restyle hints.
     state_deps: DependencySet<Impl>,
 }
 
@@ -136,6 +157,7 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
         if !(self.is_device_dirty || stylesheets_changed) {
             return false;
         }
+
         self.element_map = PerPseudoElementSelectorMap::new();
         self.pseudos_map = HashMap::with_hasher(Default::default());
         self.rules_source_order = 0;
@@ -164,14 +186,13 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
         if !stylesheet.is_effective_for_device(device) {
             return;
         }
-
         let mut rules_source_order = self.rules_source_order;
 
         // Take apart the StyleRule into individual Rules and insert
         // them into the SelectorMap of that priority.
         macro_rules! append(
             ($style_rule: ident, $priority: ident) => {
-                if $style_rule.declarations.$priority.len() > 0 {
+                if !$style_rule.declarations.$priority.is_empty() {
                     for selector in &$style_rule.selectors {
                         let map = if let Some(ref pseudo) = selector.pseudo_element {
                             self.pseudos_map.entry(pseudo.clone())
@@ -222,16 +243,17 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
             .flat_map(|s| s.effective_rules(&self.device).viewport())
             .cascade();
 
-        self.viewport_constraints = ViewportConstraints::maybe_new(self.device.viewport_size, &cascaded_rule);
+        self.viewport_constraints = ViewportConstraints::maybe_new(device.viewport_size, &cascaded_rule);
         if let Some(ref constraints) = self.viewport_constraints {
             device = Device::new(MediaType::Screen, constraints.size);
         }
-        let is_device_dirty = self.is_device_dirty || stylesheets.iter()
-            .flat_map(|stylesheet| stylesheet.rules().media())
-            .any(|media_rule| media_rule.evaluate(&self.device) != media_rule.evaluate(&device));
+
+        self.is_device_dirty |= stylesheets.iter().any(|stylesheet| {
+                stylesheet.rules().media().any(|media_rule|
+                    media_rule.evaluate(&self.device) != media_rule.evaluate(&device))
+        });
 
         self.device = device;
-        self.is_device_dirty |= is_device_dirty;
     }
 
     pub fn viewport_constraints(&self) -> &Option<ViewportConstraints> {
@@ -242,12 +264,13 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
         self.quirks_mode = enabled;
     }
 
-    /// Returns the applicable CSS declarations for the given element. This corresponds to
-    /// `ElementRuleCollector` in WebKit.
+    /// Returns the applicable CSS declarations for the given element.
+    /// This corresponds to `ElementRuleCollector` in WebKit.
     ///
-    /// The returned boolean indicates whether the style is *shareable*; that is, whether the
-    /// matched selectors are simple enough to allow the matching logic to be reduced to the logic
-    /// in `css::matching::PrivateMatchMethods::candidate_element_allows_for_style_sharing`.
+    /// The returned boolean indicates whether the style is *shareable*;
+    /// that is, whether the matched selectors are simple enough to allow the
+    /// matching logic to be reduced to the logic in
+    /// `css::matching::PrivateMatchMethods::candidate_element_allows_for_style_sharing`.
     pub fn push_applicable_declarations<E, V>(
                                         &self,
                                         element: &E,
@@ -265,7 +288,7 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
         let map = match pseudo_element {
             Some(ref pseudo) => match self.pseudos_map.get(pseudo) {
                 Some(map) => map,
-                // TODO(ecoal95): get non eagerly-cascaded pseudo-element rules here.
+                // TODO(emilio): get non eagerly-cascaded pseudo-element rules here.
                 // Actually assume there are no rules applicable.
                 None => return true,
             },
@@ -332,13 +355,20 @@ impl<Impl: SelectorImplExt> Stylist<Impl> {
         shareable
     }
 
+    #[inline]
     pub fn is_device_dirty(&self) -> bool {
         self.is_device_dirty
     }
 }
 
+/// Map that contains the CSS rules for a given origin.
+#[derive(HeapSizeOf)]
 struct PerOriginSelectorMap<Impl: SelectorImpl> {
+    /// Rules that contains at least one property declararion with
+    /// normal importance.
     normal: SelectorMap<Vec<PropertyDeclaration>, Impl>,
+    /// Rules that contains at least one property declararion with
+    /// !important.
     important: SelectorMap<Vec<PropertyDeclaration>, Impl>,
 }
 
@@ -352,9 +382,15 @@ impl<Impl: SelectorImpl> PerOriginSelectorMap<Impl> {
     }
 }
 
+/// Map that contains the CSS rules for a specific PseudoElement
+/// (or lack of PseudoElement).
+#[derive(HeapSizeOf)]
 struct PerPseudoElementSelectorMap<Impl: SelectorImpl> {
+    /// Rules from user agent stylesheets
     user_agent: PerOriginSelectorMap<Impl>,
+    /// Rules from author stylesheets
     author: PerOriginSelectorMap<Impl>,
+    /// Rules from user stylesheets
     user: PerOriginSelectorMap<Impl>,
 }
 

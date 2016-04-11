@@ -53,8 +53,9 @@ use page::Page;
 use profile_traits::mem;
 use reporter::CSSErrorReporter;
 use rustc_serialize::base64::{FromBase64, STANDARD, ToBase64};
+use script_runtime::{ScriptChan, ScriptPort};
+use script_thread::SendableMainThreadScriptChan;
 use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, RunnableWrapper};
-use script_thread::{SendableMainThreadScriptChan, ScriptChan, ScriptPort};
 use script_traits::{ConstellationControlMsg, UntrustedNodeAddress};
 use script_traits::{DocumentState, MsDuration, ScriptToCompositorMsg, TimerEvent, TimerEventId};
 use script_traits::{MozBrowserEvent, ScriptMsg as ConstellationMsg, TimerEventRequest, TimerSource};
@@ -440,7 +441,7 @@ impl WindowMethods for Window {
 
     // https://html.spec.whatwg.org/multipage/#dom-location
     fn Location(&self) -> Root<Location> {
-        self.Document().Location()
+        self.Document().GetLocation().unwrap()
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-sessionstorage
@@ -890,7 +891,7 @@ impl Window {
         let body = self.Document().GetBody();
         let (x, y) = match body {
             Some(e) => {
-                let content_size = e.upcast::<Node>().get_bounding_content_box();
+                let content_size = e.upcast::<Node>().bounding_content_box();
                 let content_height = content_size.size.height.to_f64_px();
                 let content_width = content_size.size.width.to_f64_px();
                 (xfinite.max(0.0f64).min(content_width - width),
@@ -996,7 +997,7 @@ impl Window {
                 page_clip_rect: self.page_clip_rect.get(),
             },
             document: self.Document().upcast::<Node>().to_trusted_node_address(),
-            document_stylesheets: document.stylesheets().clone(),
+            document_stylesheets: document.stylesheets(),
             stylesheets_changed: stylesheets_changed,
             window_size: window_size,
             script_join_chan: join_chan,
@@ -1021,7 +1022,11 @@ impl Window {
 
         debug!("script: layout joined");
 
-        self.pending_reflow_count.set(0);
+        // Pending reflows require display, so only reset the pending reflow count if this reflow
+        // was to be displayed.
+        if goal == ReflowGoal::ForDisplay {
+            self.pending_reflow_count.set(0);
+        }
 
         if let Some(marker) = marker {
             self.emit_timeline_marker(marker.end());
@@ -1056,7 +1061,7 @@ impl Window {
         // When all these conditions are met, notify the constellation
         // that this pipeline is ready to write the image (from the script thread
         // perspective at least).
-        if opts::get().output_file.is_some() && for_display {
+        if (opts::get().output_file.is_some() || opts::get().exit_after_load) && for_display {
             let document = self.Document();
 
             // Checks if the html element has reftest-wait attribute present.
@@ -1104,7 +1109,7 @@ impl Window {
 
     pub fn hit_test_query(&self, hit_test_request: Point2D<f32>, update_cursor: bool)
                           -> Option<UntrustedNodeAddress> {
-        self.reflow(ReflowGoal::ForDisplay,
+        self.reflow(ReflowGoal::ForScriptQuery,
                     ReflowQueryType::HitTestQuery(hit_test_request, update_cursor),
                     ReflowReason::Query);
         self.layout_rpc.hit_test().node_address

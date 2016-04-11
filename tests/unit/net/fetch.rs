@@ -6,14 +6,15 @@ use hyper::header::{AccessControlAllowHeaders, AccessControlAllowOrigin};
 use hyper::header::{CacheControl, ContentLanguage, ContentType, Expires, LastModified};
 use hyper::header::{Headers, HttpDate, Location, SetCookie, Pragma};
 use hyper::method::Method;
+use hyper::mime::{Mime, TopLevel, SubLevel};
 use hyper::server::{Handler, Listening, Server};
 use hyper::server::{Request as HyperRequest, Response as HyperResponse};
 use hyper::status::StatusCode;
 use hyper::uri::RequestUri;
 use net::fetch::methods::{fetch, fetch_async};
+use net_traits::AsyncFetchListener;
 use net_traits::request::{Origin, RedirectMode, Referer, Request, RequestMode};
 use net_traits::response::{CacheState, Response, ResponseBody, ResponseType};
-use net_traits::{AsyncFetchListener};
 use std::rc::Rc;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -92,6 +93,47 @@ fn test_fetch_response_body_matches_const_message() {
         },
         _ => panic!()
     };
+}
+
+#[test]
+fn test_fetch_aboutblank() {
+
+    let url = Url::parse("about:blank").unwrap();
+    let origin = Origin::Origin(url.origin());
+    let mut request = Request::new(url, Some(origin), false);
+    request.referer = Referer::NoReferer;
+    let wrapped_request = Rc::new(request);
+
+    let fetch_response = fetch(wrapped_request);
+    assert!(!fetch_response.is_network_error());
+    assert!(*fetch_response.body.lock().unwrap() == ResponseBody::Done(vec![]));
+}
+
+#[test]
+fn test_fetch_data() {
+
+    let url = Url::parse("data:text/html,<p>Servo</p>").unwrap();
+    let origin = Origin::Origin(url.origin());
+    let request = Request::new(url, Some(origin), false);
+    request.same_origin_data.set(true);
+    let expected_resp_body = "<p>Servo</p>".to_owned();
+    let fetch_response = fetch(Rc::new(request));
+
+    assert!(!fetch_response.is_network_error());
+    assert_eq!(fetch_response.headers.len(), 1);
+    let content_type: &ContentType = fetch_response.headers.get().unwrap();
+    assert!(**content_type == Mime(TopLevel::Text, SubLevel::Html, vec![]));
+    let resp_body = fetch_response.body.lock().unwrap();
+
+    match *resp_body {
+        ResponseBody::Done(ref val) => {
+            assert_eq!(val, &expected_resp_body.into_bytes());
+        }
+        ResponseBody::Receiving(_) => {
+            panic!();
+        },
+        ResponseBody::Empty => panic!(),
+    }
 }
 
 #[test]
@@ -266,6 +308,38 @@ fn test_fetch_response_is_opaque_redirect_filtered() {
         CacheState::None => { },
         _ => panic!()
     }
+}
+
+#[test]
+fn test_fetch_with_local_urls_only() {
+    // If flag `local_urls_only` is set, fetching a non-local URL must result in network error.
+
+    static MESSAGE: &'static [u8] = b"";
+    let handler = move |_: HyperRequest, response: HyperResponse| {
+        response.send(MESSAGE).unwrap();
+    };
+    let (mut server, server_url) = make_server(handler);
+
+    let do_fetch = |url: Url| {
+        let origin = Origin::Origin(url.origin());
+        let mut request = Request::new(url, Some(origin), false);
+        request.referer = Referer::NoReferer;
+
+        // Set the flag.
+        request.local_urls_only = true;
+
+        let wrapped_request = Rc::new(request);
+        fetch(wrapped_request)
+    };
+
+    let local_url = Url::parse("about:blank").unwrap();
+    let local_response = do_fetch(local_url);
+    let server_response = do_fetch(server_url);
+
+    let _ = server.close();
+
+    assert!(!local_response.is_network_error());
+    assert!(server_response.is_network_error());
 }
 
 fn test_fetch_redirect_count(message: &'static [u8], redirect_cap: u32) -> Response {

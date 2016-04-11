@@ -29,7 +29,7 @@ use gfx::display_list::{GradientDisplayItem};
 use gfx::display_list::{GradientStop, IframeDisplayItem, ImageDisplayItem, WebGLDisplayItem, LayeredItem, LayerInfo};
 use gfx::display_list::{LineDisplayItem, OpaqueNode, SolidColorDisplayItem};
 use gfx::display_list::{StackingContext, StackingContextId, StackingContextType};
-use gfx::display_list::{TextDisplayItem, TextOrientation, DisplayListEntry};
+use gfx::display_list::{TextDisplayItem, TextOrientation, DisplayListEntry, WebRenderImageInfo};
 use gfx::paint_thread::THREAD_TINT_COLORS;
 use gfx::text::glyph::CharIndex;
 use gfx_traits::{color, ScrollPolicy};
@@ -37,7 +37,7 @@ use inline::{FIRST_FRAGMENT_OF_ELEMENT, InlineFlow, LAST_FRAGMENT_OF_ELEMENT};
 use ipc_channel::ipc::{self, IpcSharedMemory};
 use list_item::ListItemFlow;
 use model::{self, MaybeAuto, ToGfxMatrix};
-use net_traits::image::base::{Image, PixelFormat};
+use net_traits::image::base::PixelFormat;
 use net_traits::image_cache_thread::UsePlaceholder;
 use range::Range;
 use std::default::Default;
@@ -50,8 +50,8 @@ use style::computed_values::{background_repeat, background_size};
 use style::computed_values::{border_style, image_rendering, overflow_x, position};
 use style::computed_values::{transform, transform_style, visibility};
 use style::logical_geometry::{LogicalPoint, LogicalRect, LogicalSize, WritingMode};
-use style::properties::style_structs::Border;
-use style::properties::{self, ComputedValues};
+use style::properties::style_structs::ServoBorder;
+use style::properties::{self, ComputedValues, ServoComputedValues};
 use style::values::RGBA;
 use style::values::computed;
 use style::values::computed::{LengthOrNone, LengthOrPercentage, LengthOrPercentageOrAuto, LinearGradient};
@@ -126,7 +126,7 @@ pub trait FragmentDisplayListBuilding {
     /// list if necessary.
     fn build_display_list_for_background_if_applicable(&self,
                                                        state: &mut DisplayListBuildState,
-                                                       style: &ComputedValues,
+                                                       style: &ServoComputedValues,
                                                        display_list_section: DisplayListSection,
                                                        absolute_bounds: &Rect<Au>,
                                                        clip: &ClippingRegion);
@@ -134,16 +134,16 @@ pub trait FragmentDisplayListBuilding {
     /// Computes the background size for an image with the given background area according to the
     /// rules in CSS-BACKGROUNDS § 3.9.
     fn compute_background_image_size(&self,
-                                     style: &ComputedValues,
+                                     style: &ServoComputedValues,
                                      bounds: &Rect<Au>,
-                                     image: &Image)
+                                     image: &WebRenderImageInfo)
                                      -> Size2D<Au>;
 
     /// Adds the display items necessary to paint the background image of this fragment to the
     /// appropriate section of the display list.
     fn build_display_list_for_background_image(&self,
                                                state: &mut DisplayListBuildState,
-                                               style: &ComputedValues,
+                                               style: &ServoComputedValues,
                                                display_list_section: DisplayListSection,
                                                absolute_bounds: &Rect<Au>,
                                                clip: &ClippingRegion,
@@ -157,14 +157,14 @@ pub trait FragmentDisplayListBuilding {
                                                          absolute_bounds: &Rect<Au>,
                                                          clip: &ClippingRegion,
                                                          gradient: &LinearGradient,
-                                                         style: &ComputedValues);
+                                                         style: &ServoComputedValues);
 
     /// Adds the display items necessary to paint the borders of this fragment to a display list if
     /// necessary.
     fn build_display_list_for_borders_if_applicable(
             &self,
             state: &mut DisplayListBuildState,
-            style: &ComputedValues,
+            style: &ServoComputedValues,
             border_painting_mode: BorderPaintingMode,
             bounds: &Rect<Au>,
             display_list_section: DisplayListSection,
@@ -174,7 +174,7 @@ pub trait FragmentDisplayListBuilding {
     /// if necessary.
     fn build_display_list_for_outline_if_applicable(&self,
                                                     state: &mut DisplayListBuildState,
-                                                    style: &ComputedValues,
+                                                    style: &ServoComputedValues,
                                                     bounds: &Rect<Au>,
                                                     clip: &ClippingRegion);
 
@@ -182,7 +182,7 @@ pub trait FragmentDisplayListBuilding {
     /// list if necessary.
     fn build_display_list_for_box_shadow_if_applicable(&self,
                                                        state: &mut DisplayListBuildState,
-                                                       style: &ComputedValues,
+                                                       style: &ServoComputedValues,
                                                        display_list_section: DisplayListSection,
                                                        absolute_bounds: &Rect<Au>,
                                                        clip: &ClippingRegion);
@@ -190,7 +190,7 @@ pub trait FragmentDisplayListBuilding {
     /// Adds display items necessary to draw debug boxes around a scanned text fragment.
     fn build_debug_borders_around_text_fragments(&self,
                                                  state: &mut DisplayListBuildState,
-                                                 style: &ComputedValues,
+                                                 style: &ServoComputedValues,
                                                  stacking_relative_border_box: &Rect<Au>,
                                                  stacking_relative_content_box: &Rect<Au>,
                                                  text_fragment: &ScannedTextFragmentInfo,
@@ -229,8 +229,7 @@ pub trait FragmentDisplayListBuilding {
     /// Adjusts the clipping region for descendants of this fragment as appropriate.
     fn adjust_clipping_region_for_children(&self,
                                            current_clip: &mut ClippingRegion,
-                                           stacking_relative_border_box: &Rect<Au>,
-                                           is_absolutely_positioned: bool);
+                                           stacking_relative_border_box: &Rect<Au>);
 
     /// Adjusts the clipping rectangle for a fragment to take the `clip` property into account
     /// per CSS 2.1 § 11.1.2.
@@ -307,7 +306,7 @@ fn handle_overlapping_radii(size: &Size2D<Au>, radii: &BorderRadii<Au>) -> Borde
     }
 }
 
-fn build_border_radius(abs_bounds: &Rect<Au>, border_style: &Border) -> BorderRadii<Au> {
+fn build_border_radius(abs_bounds: &Rect<Au>, border_style: &ServoBorder) -> BorderRadii<Au> {
     // TODO(cgaebel): Support border radii even in the case of multiple border widths.
     // This is an extension of supporting elliptical radii. For now, all percentage
     // radii will be relative to the width.
@@ -327,7 +326,7 @@ fn build_border_radius(abs_bounds: &Rect<Au>, border_style: &Border) -> BorderRa
 impl FragmentDisplayListBuilding for Fragment {
     fn build_display_list_for_background_if_applicable(&self,
                                                        state: &mut DisplayListBuildState,
-                                                       style: &ComputedValues,
+                                                       style: &ServoComputedValues,
                                                        display_list_section: DisplayListSection,
                                                        absolute_bounds: &Rect<Au>,
                                                        clip: &ClippingRegion) {
@@ -402,9 +401,9 @@ impl FragmentDisplayListBuilding for Fragment {
     }
 
     fn compute_background_image_size(&self,
-                                     style: &ComputedValues,
+                                     style: &ServoComputedValues,
                                      bounds: &Rect<Au>,
-                                     image: &Image)
+                                     image: &WebRenderImageInfo)
                                      -> Size2D<Au> {
         // If `image_aspect_ratio` < `bounds_aspect_ratio`, the image is tall; otherwise, it is
         // wide.
@@ -456,20 +455,23 @@ impl FragmentDisplayListBuilding for Fragment {
 
     fn build_display_list_for_background_image(&self,
                                                state: &mut DisplayListBuildState,
-                                               style: &ComputedValues,
+                                               style: &ServoComputedValues,
                                                display_list_section: DisplayListSection,
                                                absolute_bounds: &Rect<Au>,
                                                clip: &ClippingRegion,
                                                image_url: &Url) {
         let background = style.get_background();
-        let image =
-            state.layout_context.get_or_request_image(image_url.clone(), UsePlaceholder::No);
-        if let Some(image) = image {
+        let fetch_image_data_as_well = !opts::get().use_webrender;
+        let webrender_image =
+            state.layout_context.get_webrender_image_for_url(image_url,
+                                                             UsePlaceholder::No,
+                                                             fetch_image_data_as_well);
+        if let Some((webrender_image, image_data)) = webrender_image {
             debug!("(building display list) building background image");
 
             // Use `background-size` to get the size.
             let mut bounds = *absolute_bounds;
-            let image_size = self.compute_background_image_size(style, &bounds, &*image);
+            let image_size = self.compute_background_image_size(style, &bounds, &webrender_image);
 
             // Clip.
             //
@@ -560,9 +562,10 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                     style,
                                                                     Cursor::DefaultCursor),
                                            &clip),
-                image: image.clone(),
+                webrender_image: webrender_image,
+                image_data: image_data.map(Arc::new),
                 stretch_size: Size2D::new(image_size.width, image_size.height),
-                image_rendering: style.get_effects().image_rendering.clone(),
+                image_rendering: style.get_inheritedbox().image_rendering.clone(),
             }), display_list_section);
         }
     }
@@ -573,7 +576,7 @@ impl FragmentDisplayListBuilding for Fragment {
                                                          absolute_bounds: &Rect<Au>,
                                                          clip: &ClippingRegion,
                                                          gradient: &LinearGradient,
-                                                         style: &ComputedValues) {
+                                                         style: &ServoComputedValues) {
         let mut clip = clip.clone();
         clip.intersect_rect(absolute_bounds);
 
@@ -689,7 +692,7 @@ impl FragmentDisplayListBuilding for Fragment {
 
     fn build_display_list_for_box_shadow_if_applicable(&self,
                                                        state: &mut DisplayListBuildState,
-                                                       style: &ComputedValues,
+                                                       style: &ServoComputedValues,
                                                        display_list_section: DisplayListSection,
                                                        absolute_bounds: &Rect<Au>,
                                                        clip: &ClippingRegion) {
@@ -728,7 +731,7 @@ impl FragmentDisplayListBuilding for Fragment {
     fn build_display_list_for_borders_if_applicable(
             &self,
             state: &mut DisplayListBuildState,
-            style: &ComputedValues,
+            style: &ServoComputedValues,
             border_painting_mode: BorderPaintingMode,
             bounds: &Rect<Au>,
             display_list_section: DisplayListSection,
@@ -791,7 +794,7 @@ impl FragmentDisplayListBuilding for Fragment {
 
     fn build_display_list_for_outline_if_applicable(&self,
                                                     state: &mut DisplayListBuildState,
-                                                    style: &ComputedValues,
+                                                    style: &ServoComputedValues,
                                                     bounds: &Rect<Au>,
                                                     clip: &ClippingRegion) {
         let width = style.get_outline().outline_width;
@@ -830,7 +833,7 @@ impl FragmentDisplayListBuilding for Fragment {
 
     fn build_debug_borders_around_text_fragments(&self,
                                                  state: &mut DisplayListBuildState,
-                                                 style: &ComputedValues,
+                                                 style: &ServoComputedValues,
                                                  stacking_relative_border_box: &Rect<Au>,
                                                  stacking_relative_content_box: &Rect<Au>,
                                                  text_fragment: &ScannedTextFragmentInfo,
@@ -918,6 +921,25 @@ impl FragmentDisplayListBuilding for Fragment {
             }
             _ => return,
         };
+
+        // Draw a highlighted background if the text is selected.
+        //
+        // TODO: Allow non-text fragments to be selected too.
+        if scanned_text_fragment_info.selected() {
+            let style = self.selected_style();
+            let background_color = style.resolve_color(style.get_background().background_color);
+            state.add_display_item(
+                DisplayItem::SolidColorClass(box SolidColorDisplayItem {
+                    base: BaseDisplayItem::new(stacking_relative_border_box,
+                                               DisplayItemMetadata::new(self.node,
+                                                                        &*self.style,
+                                                                        Cursor::DefaultCursor),
+                                               &clip),
+                    color: background_color.to_gfx_color(),
+            }), display_list_section);
+        }
+
+        // Draw a caret at the insertion point.
         let insertion_point_index = match scanned_text_fragment_info.insertion_point {
             Some(insertion_point_index) => insertion_point_index,
             None => return,
@@ -991,13 +1013,9 @@ impl FragmentDisplayListBuilding for Fragment {
         // display list items.
         let mut clip = (*clip).clone();
         self.adjust_clip_for_style(&mut clip, &stacking_relative_border_box);
-        if !clip.might_intersect_rect(&stacking_relative_border_box) {
-            return;
-        }
+        let empty_rect = !clip.might_intersect_rect(&stacking_relative_border_box);
 
-        debug!("Fragment::build_display_list: intersected. Adding display item...");
-
-        if self.is_primary_fragment() {
+        if self.is_primary_fragment() && !empty_rect {
             // Add shadows, background, borders, and outlines, if applicable.
             if let Some(ref inline_context) = self.inline_context {
                 for node in inline_context.nodes.iter().rev() {
@@ -1057,13 +1075,22 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                   &stacking_relative_border_box,
                                                                   &clip);
             }
+        }
 
-            // Paint the selection point if necessary.
+        if self.is_primary_fragment() {
+            // Paint the selection point if necessary.  Even an empty text fragment may have an
+            // insertion point, so we do this even if `empty_rect` is true.
             self.build_display_items_for_selection_if_necessary(state,
                                                                 &stacking_relative_border_box,
                                                                 display_list_section,
                                                                 &clip);
         }
+
+        if empty_rect {
+            return;
+        }
+
+        debug!("Fragment::build_display_list: intersected. Adding display item...");
 
         // Create special per-fragment-type display items.
         self.build_fragment_type_specific_display_items(state,
@@ -1091,8 +1118,15 @@ impl FragmentDisplayListBuilding for Fragment {
                 //
                 // NB: According to CSS-BACKGROUNDS, text shadows render in *reverse* order (front
                 // to back).
-                let text_color = self.style().get_color().color;
-                for text_shadow in self.style.get_effects().text_shadow.0.iter().rev() {
+
+                // TODO(emilio): Allow changing more properties by ::selection
+                let text_color = if text_fragment.selected() {
+                    self.selected_style().get_color().color
+                } else {
+                    self.style().get_color().color
+                };
+
+                for text_shadow in self.style.get_inheritedtext().text_shadow.0.iter().rev() {
                     let offset = &Point2D::new(text_shadow.offset_x, text_shadow.offset_y);
                     let color = self.style().resolve_color(text_shadow.color);
                     self.build_display_list_for_text_fragment(state,
@@ -1173,9 +1207,10 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                             &*self.style,
                                                                             Cursor::DefaultCursor),
                                                    clip),
-                        image: image.clone(),
+                        webrender_image: WebRenderImageInfo::from_image(image),
+                        image_data: Some(Arc::new(image.bytes.clone())),
                         stretch_size: stacking_relative_content_box.size,
-                        image_rendering: self.style.get_effects().image_rendering.clone(),
+                        image_rendering: self.style.get_inheritedbox().image_rendering.clone(),
                     }), DisplayListSection::Content);
                 }
             }
@@ -1192,13 +1227,7 @@ impl FragmentDisplayListBuilding for Fragment {
                             let (sender, receiver) = ipc::channel().unwrap();
                             ipc_renderer.send(CanvasMsg::FromLayout(
                                 FromLayoutMsg::SendData(sender))).unwrap();
-                            let data = receiver.recv().unwrap();
-
-                            // Propagate the layer and the renderer to the paint task.
-                            state.layout_context.shared.canvas_layers_sender.lock().unwrap().send(
-                                (layer_id, (*ipc_renderer).clone())).unwrap();
-
-                            data
+                            receiver.recv().unwrap()
                         },
                         None => CanvasData::Pixels(CanvasPixelData {
                             image_data: IpcSharedMemory::from_byte(0xFFu8, width * height * 4),
@@ -1214,13 +1243,13 @@ impl FragmentDisplayListBuilding for Fragment {
                                                                                     &*self.style,
                                                                                     Cursor::DefaultCursor),
                                                            clip),
-                                image: Arc::new(Image {
+                                image_data: Some(Arc::new(canvas_data.image_data)),
+                                webrender_image: WebRenderImageInfo {
                                     width: width as u32,
                                     height: height as u32,
                                     format: PixelFormat::RGBA8,
-                                    bytes: canvas_data.image_data,
-                                    id: canvas_data.image_key,
-                                }),
+                                    key: canvas_data.image_key,
+                                },
                                 stretch_size: stacking_relative_content_box.size,
                                 image_rendering: image_rendering::T::Auto,
                             })
@@ -1279,7 +1308,9 @@ impl FragmentDisplayListBuilding for Fragment {
             }
         };
         let overflow = match mode {
-            StackingContextCreationMode::InnerScrollWrapper |
+            StackingContextCreationMode::InnerScrollWrapper => {
+                Rect::new(Point2D::zero(), base_flow.overflow.paint.size)
+            }
             StackingContextCreationMode::OuterScrollWrapper => {
                 Rect::new(Point2D::zero(), border_box.size)
             }
@@ -1414,8 +1445,7 @@ impl FragmentDisplayListBuilding for Fragment {
 
     fn adjust_clipping_region_for_children(&self,
                                            current_clip: &mut ClippingRegion,
-                                           stacking_relative_border_box: &Rect<Au>,
-                                           is_absolutely_positioned: bool) {
+                                           stacking_relative_border_box: &Rect<Au>) {
         // Don't clip if we're text.
         if self.is_scanned_text_fragment() {
             return
@@ -1445,33 +1475,22 @@ impl FragmentDisplayListBuilding for Fragment {
 
         // Clip according to the values of `overflow-x` and `overflow-y`.
         //
-        // TODO(pcwalton): Support scrolling of non-absolutely-positioned elements.
         // FIXME(pcwalton): This may be more complex than it needs to be, since it seems to be
         // impossible with the computed value rules as they are to have `overflow-x: visible` with
         // `overflow-y: <scrolling>` or vice versa!
-        match (self.style.get_box().overflow_x, is_absolutely_positioned) {
-            (overflow_x::T::hidden, _) |
-            (overflow_x::T::auto, false) |
-            (overflow_x::T::scroll, false) => {
-                let mut bounds = current_clip.bounding_rect();
-                let max_x = cmp::min(bounds.max_x(), overflow_clip_rect.max_x());
-                bounds.origin.x = cmp::max(bounds.origin.x, overflow_clip_rect.origin.x);
-                bounds.size.width = max_x - bounds.origin.x;
-                current_clip.intersect_rect(&bounds)
-            }
-            _ => {}
+        if let overflow_x::T::hidden = self.style.get_box().overflow_x {
+            let mut bounds = current_clip.bounding_rect();
+            let max_x = cmp::min(bounds.max_x(), overflow_clip_rect.max_x());
+            bounds.origin.x = cmp::max(bounds.origin.x, overflow_clip_rect.origin.x);
+            bounds.size.width = max_x - bounds.origin.x;
+            current_clip.intersect_rect(&bounds)
         }
-        match (self.style.get_box().overflow_y.0, is_absolutely_positioned) {
-            (overflow_x::T::hidden, _) |
-            (overflow_x::T::auto, false) |
-            (overflow_x::T::scroll, false) => {
-                let mut bounds = current_clip.bounding_rect();
-                let max_y = cmp::min(bounds.max_y(), overflow_clip_rect.max_y());
-                bounds.origin.y = cmp::max(bounds.origin.y, overflow_clip_rect.origin.y);
-                bounds.size.height = max_y - bounds.origin.y;
-                current_clip.intersect_rect(&bounds)
-            }
-            _ => {}
+        if let overflow_x::T::hidden = self.style.get_box().overflow_y.0 {
+            let mut bounds = current_clip.bounding_rect();
+            let max_y = cmp::min(bounds.max_y(), overflow_clip_rect.max_y());
+            bounds.origin.y = cmp::max(bounds.origin.y, overflow_clip_rect.origin.y);
+            bounds.size.height = max_y - bounds.origin.y;
+            current_clip.intersect_rect(&bounds)
         }
 
         let border_radii = build_border_radius(stacking_relative_border_box,

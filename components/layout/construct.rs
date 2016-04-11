@@ -45,7 +45,7 @@ use std::sync::atomic::Ordering;
 use style::computed_values::content::ContentItem;
 use style::computed_values::{caption_side, display, empty_cells, float, list_style_position};
 use style::computed_values::{position};
-use style::properties::{self, ComputedValues};
+use style::properties::{self, ComputedValues, ServoComputedValues};
 use table::TableFlow;
 use table_caption::TableCaptionFlow;
 use table_cell::TableCellFlow;
@@ -105,7 +105,7 @@ pub enum ConstructionItem {
     /// Inline fragments and associated {ib} splits that have not yet found flows.
     InlineFragments(InlineFragmentsConstructionResult),
     /// Potentially ignorable whitespace.
-    Whitespace(OpaqueNode, PseudoElementType<()>, Arc<ComputedValues>, RestyleDamage),
+    Whitespace(OpaqueNode, PseudoElementType<()>, Arc<ServoComputedValues>, RestyleDamage),
     /// TableColumn Fragment
     TableColumnFragment(Fragment),
 }
@@ -217,6 +217,7 @@ impl InlineFragmentsAccumulator {
                 address: node.opaque(),
                 pseudo: node.get_pseudo_element_type().strip(),
                 style: node.style().clone(),
+                selected_style: node.selected_style().clone(),
                 flags: InlineFragmentNodeFlags::empty(),
             }),
             bidi_control_chars: None,
@@ -297,7 +298,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         let specific_fragment_info = match node.type_id() {
             Some(NodeTypeId::Element(ElementTypeId::HTMLElement(
                         HTMLElementTypeId::HTMLIFrameElement))) => {
-                SpecificFragmentInfo::Iframe(box IframeFragmentInfo::new(node))
+                SpecificFragmentInfo::Iframe(IframeFragmentInfo::new(node))
             }
             Some(NodeTypeId::Element(ElementTypeId::HTMLElement(
                         HTMLElementTypeId::HTMLImageElement))) => {
@@ -360,6 +361,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             let fragment = Fragment::from_opaque_node_and_style(child_node.opaque(),
                                                                 PseudoElementType::Normal,
                                                                 style,
+                                                                child_node.selected_style().clone(),
                                                                 child_node.restyle_damage(),
                                                                 SpecificFragmentInfo::TableRow);
             let mut new_child: FlowRef = Arc::new(TableRowFlow::from_fragment(fragment));
@@ -373,6 +375,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
             let fragment = Fragment::from_opaque_node_and_style(child_node.opaque(),
                                                                 PseudoElementType::Normal,
                                                                 style,
+                                                                child_node.selected_style().clone(),
                                                                 child_node.restyle_damage(),
                                                                 SpecificFragmentInfo::Table);
             let mut new_child: FlowRef = Arc::new(TableFlow::from_fragment(fragment));
@@ -387,6 +390,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 Fragment::from_opaque_node_and_style(child_node.opaque(),
                                                      PseudoElementType::Normal,
                                                      style,
+                                                     child_node.selected_style().clone(),
                                                      child_node.restyle_damage(),
                                                      SpecificFragmentInfo::TableWrapper);
             let mut new_child: FlowRef = Arc::new(TableWrapperFlow::from_fragment(fragment, None));
@@ -578,12 +582,13 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 // Add whitespace results. They will be stripped out later on when
                 // between block elements, and retained when between inline elements.
                 let fragment_info = SpecificFragmentInfo::UnscannedText(
-                    UnscannedTextFragmentInfo::new(" ".to_owned(), None));
+                    box UnscannedTextFragmentInfo::new(" ".to_owned(), None));
                 properties::modify_style_for_replaced_content(&mut whitespace_style);
                 properties::modify_style_for_text(&mut whitespace_style);
                 let fragment = Fragment::from_opaque_node_and_style(whitespace_node,
                                                                     whitespace_pseudo,
                                                                     whitespace_style,
+                                                                    node.selected_style().clone(),
                                                                     whitespace_damage,
                                                                     fragment_info);
                 inline_fragment_accumulator.fragments.fragments.push_back(fragment);
@@ -676,7 +681,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                        HTMLElementTypeId::HTMLInputElement))) ||
            node.type_id() == Some(NodeTypeId::Element(ElementTypeId::HTMLElement(
                        HTMLElementTypeId::HTMLTextAreaElement)));
-        if node.get_pseudo_element_type() != PseudoElementType::Normal ||
+        if node.get_pseudo_element_type().is_before_or_after() ||
                 node_is_input_or_text_area {
             // A TextArea's text contents are displayed through the input text
             // box, so don't construct them.
@@ -702,25 +707,28 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
     fn create_fragments_for_node_text_content(&self,
                                               fragments: &mut IntermediateInlineFragments,
                                               node: &ConcreteThreadSafeLayoutNode,
-                                              style: &Arc<ComputedValues>) {
+                                              style: &Arc<ServoComputedValues>) {
         // Fast path: If there is no text content, return immediately.
         let text_content = node.text_content();
         if text_content.is_empty() {
             return
         }
 
-        let insertion_point = node.insertion_point();
+        let selection = node.selection();
         let mut style = (*style).clone();
         properties::modify_style_for_text(&mut style);
 
+        let selected_style = node.selected_style();
+
         match text_content {
             TextContent::Text(string) => {
-                let info = UnscannedTextFragmentInfo::new(string, insertion_point);
+                let info = box UnscannedTextFragmentInfo::new(string, selection);
                 let specific_fragment_info = SpecificFragmentInfo::UnscannedText(info);
                 fragments.fragments.push_back(Fragment::from_opaque_node_and_style(
                         node.opaque(),
                         node.get_pseudo_element_type().strip(),
-                        style.clone(),
+                        style,
+                        selected_style.clone(),
                         node.restyle_damage(),
                         specific_fragment_info))
             }
@@ -728,7 +736,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 for content_item in content_items.into_iter() {
                     let specific_fragment_info = match content_item {
                         ContentItem::String(string) => {
-                            let info = UnscannedTextFragmentInfo::new(string, None);
+                            let info = box UnscannedTextFragmentInfo::new(string, None);
                             SpecificFragmentInfo::UnscannedText(info)
                         }
                         content_item => {
@@ -740,6 +748,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                             node.opaque(),
                             node.get_pseudo_element_type().strip(),
                             style.clone(),
+                            selected_style.clone(),
                             node.restyle_damage(),
                             specific_fragment_info))
                 }
@@ -823,6 +832,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         let kid_node = flow.as_block().fragment.node;
                         let kid_pseudo = flow.as_block().fragment.pseudo.clone();
                         let kid_style = flow.as_block().fragment.style.clone();
+                        let kid_selected_style = flow.as_block().fragment.selected_style.clone();
                         let kid_restyle_damage = flow.as_block().fragment.restyle_damage;
                         let fragment_info = SpecificFragmentInfo::InlineAbsolute(
                             InlineAbsoluteFragmentInfo::new(flow));
@@ -830,6 +840,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                                 kid_node,
                                 kid_pseudo,
                                 kid_style,
+                                kid_selected_style,
                                 kid_restyle_damage,
                                 fragment_info));
                         fragment_accumulator.fragments
@@ -859,12 +870,13 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         whitespace_damage)) => {
                     // Instantiate the whitespace fragment.
                     let fragment_info = SpecificFragmentInfo::UnscannedText(
-                        UnscannedTextFragmentInfo::new(" ".to_owned(), None));
+                        box UnscannedTextFragmentInfo::new(" ".to_owned(), None));
                     properties::modify_style_for_replaced_content(&mut whitespace_style);
                     properties::modify_style_for_text(&mut whitespace_style);
                     let fragment = Fragment::from_opaque_node_and_style(whitespace_node,
                                                                         whitespace_pseudo,
                                                                         whitespace_style,
+                                                                        node.selected_style().clone(),
                                                                         whitespace_damage,
                                                                         fragment_info);
                     fragment_accumulator.fragments.fragments.push_back(fragment)
@@ -961,7 +973,8 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                 block_flow));
         let fragment = Fragment::from_opaque_node_and_style(node.opaque(),
                                                             node.get_pseudo_element_type().strip(),
-                                                            modified_style.clone(),
+                                                            modified_style,
+                                                            node.selected_style().clone(),
                                                             node.restyle_damage(),
                                                             fragment_info);
 
@@ -994,6 +1007,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
         let fragment = Fragment::from_opaque_node_and_style(node.opaque(),
                                                             PseudoElementType::Normal,
                                                             style,
+                                                            node.selected_style().clone(),
                                                             node.restyle_damage(),
                                                             fragment_info);
 
@@ -1241,7 +1255,7 @@ impl<'a, ConcreteThreadSafeLayoutNode: ThreadSafeLayoutNode>
                         unscanned_marker_fragments.push_back(Fragment::new(
                             node,
                             SpecificFragmentInfo::UnscannedText(
-                                UnscannedTextFragmentInfo::new(text, None))));
+                                box UnscannedTextFragmentInfo::new(text, None))));
                         let marker_fragments = TextRunScanner::new().scan_for_runs(
                             &mut self.layout_context.font_context(),
                             unscanned_marker_fragments);
@@ -1461,6 +1475,8 @@ impl<'a, ConcreteThreadSafeLayoutNode> PostorderNodeMutTraversal<ConcreteThreadS
                     PseudoElementType::Normal => display::T::inline,
                     PseudoElementType::Before(display) => display,
                     PseudoElementType::After(display) => display,
+                    PseudoElementType::DetailsContent(display) => display,
+                    PseudoElementType::DetailsSummary(display) => display,
                 };
                 (display, style.get_box().float, style.get_box().position)
             }
@@ -1646,6 +1662,8 @@ impl<ConcreteThreadSafeLayoutNode> NodeUtils for ConcreteThreadSafeLayoutNode
         match self.get_pseudo_element_type() {
             PseudoElementType::Before(_) => &mut data.before_flow_construction_result,
             PseudoElementType::After (_) => &mut data.after_flow_construction_result,
+            PseudoElementType::DetailsSummary(_) => &mut data.details_summary_flow_construction_result,
+            PseudoElementType::DetailsContent(_) => &mut data.details_content_flow_construction_result,
             PseudoElementType::Normal    => &mut data.flow_construction_result,
         }
     }
@@ -1764,20 +1782,20 @@ pub fn strip_ignorable_whitespace_from_start(this: &mut LinkedList<Fragment>) {
                             remaining_fragment.inline_context {
                         if let Some(ref inline_context_of_removed_fragment) =
                                 removed_fragment.inline_context {
-                            for (i, inline_context_node_from_removed_fragment) in
-                                    inline_context_of_removed_fragment.nodes.iter().enumerate() {
-                                if i >= inline_context_of_remaining_fragment.nodes.len() {
-                                    break
-                                }
+                            for (inline_context_node_from_removed_fragment,
+                                 inline_context_node_from_remaining_fragment) in
+                                    inline_context_of_removed_fragment.nodes.iter().rev().zip(
+                                        inline_context_of_remaining_fragment.nodes.iter_mut().rev()
+                                    ) {
                                 if !inline_context_node_from_removed_fragment.flags.contains(
                                         FIRST_FRAGMENT_OF_ELEMENT) {
                                     continue
                                 }
                                 if inline_context_node_from_removed_fragment.address !=
-                                        inline_context_of_remaining_fragment.nodes[i].address {
+                                        inline_context_node_from_remaining_fragment.address {
                                     continue
                                 }
-                                inline_context_of_remaining_fragment.nodes[i].flags.insert(
+                                inline_context_node_from_remaining_fragment.flags.insert(
                                     FIRST_FRAGMENT_OF_ELEMENT);
                             }
                         }
@@ -1817,7 +1835,7 @@ pub fn strip_ignorable_whitespace_from_end(this: &mut LinkedList<Fragment>) {
 
 /// If the 'unicode-bidi' property has a value other than 'normal', return the bidi control codes
 /// to inject before and after the text content of the element.
-fn bidi_control_chars(style: &Arc<ComputedValues>) -> Option<(&'static str, &'static str)> {
+fn bidi_control_chars(style: &Arc<ServoComputedValues>) -> Option<(&'static str, &'static str)> {
     use style::computed_values::direction::T::*;
     use style::computed_values::unicode_bidi::T::*;
 
@@ -1844,12 +1862,13 @@ fn control_chars_to_fragment(node: &InlineFragmentNodeInfo,
                              restyle_damage: RestyleDamage)
                              -> Fragment {
     let info = SpecificFragmentInfo::UnscannedText(
-        UnscannedTextFragmentInfo::new(String::from(text), None));
+        box UnscannedTextFragmentInfo::new(String::from(text), None));
     let mut style = node.style.clone();
     properties::modify_style_for_text(&mut style);
     Fragment::from_opaque_node_and_style(node.address,
                                          node.pseudo,
-                                         style,
+                                         style.clone(),
+                                         node.selected_style.clone(),
                                          restyle_damage,
                                          info)
 }

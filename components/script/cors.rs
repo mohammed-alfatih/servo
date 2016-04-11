@@ -20,7 +20,7 @@ use hyper::mime::{Mime, SubLevel, TopLevel};
 use hyper::status::StatusClass::Success;
 use net_traits::{AsyncResponseListener, Metadata, ResponseAction};
 use network_listener::{NetworkListener, PreInvoke};
-use script_thread::ScriptChan;
+use script_runtime::ScriptChan;
 use std::ascii::AsciiExt;
 use std::borrow::ToOwned;
 use std::sync::{Arc, Mutex};
@@ -64,15 +64,21 @@ impl CORSRequest {
                      destination: Url,
                      mode: RequestMode,
                      method: Method,
-                     headers: Headers)
+                     headers: Headers,
+                     same_origin_data_url_flag: bool)
                      -> Result<Option<CORSRequest>, ()> {
         if referer.scheme == destination.scheme && referer.host() == destination.host() &&
            referer.port() == destination.port() {
             return Ok(None); // Not cross-origin, proceed with a normal fetch
         }
         match &*destination.scheme {
-            // TODO: If the request's same origin data url flag is set (which isn't the case for XHR)
-            // we can fetch a data URL normally. about:blank can also be fetched by XHR
+            // As per (https://fetch.spec.whatwg.org/#main-fetch 5.1.9), about URLs can be fetched
+            // the same as a basic request.
+            "about" if destination.path() == Some(&["blank".to_owned()]) => Ok(None),
+            // As per (https://fetch.spec.whatwg.org/#main-fetch 5.1.9), data URLs can be fetched
+            // the same as a basic request if the request's method is GET and the
+            // same-origin data-URL flag is set.
+            "data" if same_origin_data_url_flag && method == Method::Get => Ok(None),
             "http" | "https" => {
                 let mut req = CORSRequest::new(referer, destination, mode, method, headers);
                 req.preflight_flag = !is_simple_method(&req.method) ||
@@ -394,9 +400,8 @@ impl CORSCache {
                                 header_name: &str)
                                 -> Option<&'a mut CORSCacheEntry> {
         self.cleanup();
-        let CORSCache(ref mut buf) = *self;
         // Credentials are not yet implemented here
-        buf.iter_mut().find(|e| {
+        self.0.iter_mut().find(|e| {
             e.origin.scheme == request.origin.scheme && e.origin.host() == request.origin.host() &&
             e.origin.port() == request.origin.port() && e.url == request.destination &&
             e.header_or_method.match_header(header_name)
@@ -421,9 +426,8 @@ impl CORSCache {
                                 -> Option<&'a mut CORSCacheEntry> {
         // we can take the method from CORSRequest itself
         self.cleanup();
-        let CORSCache(ref mut buf) = *self;
         // Credentials are not yet implemented here
-        buf.iter_mut().find(|e| {
+        self.0.iter_mut().find(|e| {
             e.origin.scheme == request.origin.scheme && e.origin.host() == request.origin.host() &&
             e.origin.port() == request.origin.port() && e.url == request.destination &&
             e.header_or_method.match_method(method)
@@ -445,8 +449,7 @@ impl CORSCache {
 
     fn insert(&mut self, entry: CORSCacheEntry) {
         self.cleanup();
-        let CORSCache(ref mut buf) = *self;
-        buf.push(entry);
+        self.0.push(entry);
     }
 }
 

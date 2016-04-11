@@ -20,11 +20,14 @@ extern crate immeta;
 extern crate ipc_channel;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate mime;
 extern crate mime_guess;
 extern crate msg;
 extern crate net_traits;
 extern crate openssl;
 extern crate rustc_serialize;
+extern crate threadpool;
 extern crate time;
 extern crate url;
 extern crate util;

@@ -39,12 +39,12 @@ pub enum ScriptMsg {
     ChangeRunningAnimationsState(PipelineId, AnimationState),
     /// Requests that a new 2D canvas thread be created. (This is done in the constellation because
     /// 2D canvases may use the GPU and we don't want to give untrusted content access to the GPU.)
-    CreateCanvasPaintThread(Size2D<i32>, IpcSender<(IpcSender<CanvasMsg>, usize)>),
+    CreateCanvasPaintThread(Size2D<i32>, IpcSender<IpcSender<CanvasMsg>>),
     /// Requests that a new WebGL thread be created. (This is done in the constellation because
     /// WebGL uses the GPU and we don't want to give untrusted content access to the GPU.)
     CreateWebGLPaintThread(Size2D<i32>,
                          GLContextAttributes,
-                         IpcSender<Result<(IpcSender<CanvasMsg>, usize), String>>),
+                         IpcSender<Result<IpcSender<CanvasMsg>, String>>),
     /// Dispatched after the DOM load event has fired on a document
     /// Causes a `load` event to be dispatched to any enclosing frame context element
     /// for the given pipeline.
@@ -74,7 +74,7 @@ pub enum ScriptMsg {
     /// Status message to be displayed in the chrome, eg. a link URL on mouseover.
     NodeStatus(Option<String>),
     /// Notification that this iframe should be removed.
-    RemoveIFrame(PipelineId),
+    RemoveIFrame(PipelineId, Option<IpcSender<()>>),
     /// A load has been requested in an IFrame.
     ScriptLoadedURLInIFrame(IFrameLoadInfo),
     /// Requests that the constellation set the contents of the clipboard

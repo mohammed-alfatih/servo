@@ -1,5 +1,7 @@
-input                   { background: white; min-height: 1.0em; padding: 0em; padding-left: 0.25em; padding-right: 0.25em; border: solid lightgrey 1px; color: black; white-space: nowrap; }
+input                   { background: white; min-height: 1.0em; padding: 0em; padding-left: 0.25em; padding-right: 0.25em; border: solid lightgrey 1px; color: black; white-space: nowrap; text-align: left; }
 textarea                { background: white; min-height: 1.0em; padding: 0em; padding-left: 0.25em; padding-right: 0.25em; border: solid lightgrey 1px; color: black; white-space: pre; }
+input::selection,
+textarea::selection     { background: rgba(176, 214, 255, 1.0); color: black; }
 button,
 input[type="button"],
 input[type="submit"],
@@ -35,5 +37,26 @@ textarea {
   cursor: text;
   overflow: hidden;
   -servo-overflow-clip-box: content-box;
+}
+
+// https://html.spec.whatwg.org/multipage/rendering.html#the-details-and-summary-elements
+details {
+  display: block;
+}
+details::-servo-details-summary {
+  margin-left: 40px;
+  display: list-item;
+  list-style: disclosure-closed;
+}
+details[open]::-servo-details-summary {
+  list-style: disclosure-open;
+}
+details::-servo-details-content {
+  margin-left: 40px;
+  overflow: hidden;
+  display: none;
+}
+details[open]::-servo-details-content {
+  display: block;
 }
 

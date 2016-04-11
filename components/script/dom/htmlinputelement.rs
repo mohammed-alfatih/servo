@@ -28,10 +28,13 @@ use dom::keyboardevent::KeyboardEvent;
 use dom::node::{Node, NodeDamage, UnbindContext};
 use dom::node::{document_from_node, window_from_node};
 use dom::nodelist::NodeList;
+use dom::validation::Validatable;
 use dom::virtualmethods::VirtualMethods;
 use msg::constellation_msg::ConstellationChan;
-use script_thread::ScriptThreadEventCategory::InputEvent;
-use script_thread::{CommonScriptMsg, Runnable};
+use range::Range;
+use script_runtime::CommonScriptMsg;
+use script_runtime::ScriptThreadEventCategory::InputEvent;
+use script_thread::Runnable;
 use script_traits::ScriptMsg as ConstellationMsg;
 use std::borrow::ToOwned;
 use std::cell::Cell;
@@ -198,6 +201,7 @@ impl HTMLInputElement {
         text_input.selection_begin = Some(text_input.get_text_point_for_absolute_point(start));
         text_input.edit_point = text_input.get_text_point_for_absolute_point(end);
         self.selection_direction.set(*direction);
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
     }
 
 }
@@ -208,7 +212,7 @@ pub trait LayoutHTMLInputElementHelpers {
     #[allow(unsafe_code)]
     unsafe fn get_size_for_layout(self) -> u32;
     #[allow(unsafe_code)]
-    unsafe fn get_insertion_point_index_for_layout(self) -> Option<isize>;
+    unsafe fn get_selection_for_layout(self) -> Option<Range<isize>>;
     #[allow(unsafe_code)]
     unsafe fn get_checked_state_for_layout(self) -> bool;
     #[allow(unsafe_code)]
@@ -241,7 +245,7 @@ impl LayoutHTMLInputElementHelpers for LayoutJS<HTMLInputElement> {
             InputType::InputPassword => {
                 let text = get_raw_textinput_value(self);
                 if !text.is_empty() {
-                    // The implementation of get_insertion_point_index_for_layout expects a 1:1 mapping of chars.
+                    // The implementation of get_selection_for_layout expects a 1:1 mapping of chars.
                     text.chars().map(|_| '●').collect()
                 } else {
                     String::from((*self.unsafe_get()).placeholder.borrow_for_layout().clone())
@@ -250,7 +254,7 @@ impl LayoutHTMLInputElementHelpers for LayoutJS<HTMLInputElement> {
             _ => {
                 let text = get_raw_textinput_value(self);
                 if !text.is_empty() {
-                    // The implementation of get_insertion_point_index_for_layout expects a 1:1 mapping of chars.
+                    // The implementation of get_selection_for_layout expects a 1:1 mapping of chars.
                     String::from(text)
                 } else {
                     String::from((*self.unsafe_get()).placeholder.borrow_for_layout().clone())
@@ -267,25 +271,24 @@ impl LayoutHTMLInputElementHelpers for LayoutJS<HTMLInputElement> {
 
     #[allow(unrooted_must_root)]
     #[allow(unsafe_code)]
-    unsafe fn get_insertion_point_index_for_layout(self) -> Option<isize> {
-        if !(*self.unsafe_get()).upcast::<Element>().get_focus_state() {
+    unsafe fn get_selection_for_layout(self) -> Option<Range<isize>> {
+        if !(*self.unsafe_get()).upcast::<Element>().focus_state() {
             return None;
         }
-        match (*self.unsafe_get()).input_type.get() {
-            InputType::InputText  => {
-                let raw = self.get_value_for_layout();
-                Some(search_index((*self.unsafe_get()).textinput.borrow_for_layout().edit_point.index,
-                                  raw.char_indices()))
-            }
-            InputType::InputPassword => {
-                // Use the raw textinput to get the index as long as we use a 1:1 char mapping
-                // in get_input_value_for_layout.
-                let raw = get_raw_textinput_value(self);
-                Some(search_index((*self.unsafe_get()).textinput.borrow_for_layout().edit_point.index,
-                                  raw.char_indices()))
-            }
-            _ => None
-        }
+
+        // Use the raw textinput to get the index as long as we use a 1:1 char mapping
+        // in get_value_for_layout.
+        let raw = match (*self.unsafe_get()).input_type.get() {
+            InputType::InputText |
+            InputType::InputPassword => get_raw_textinput_value(self),
+            _ => return None
+        };
+        let textinput = (*self.unsafe_get()).textinput.borrow_for_layout();
+        let selection = textinput.get_absolute_selection_range();
+        let begin_byte = selection.begin();
+        let begin = search_index(begin_byte, raw.char_indices());
+        let length = search_index(selection.length(), raw[begin_byte..].char_indices());
+        Some(Range::new(begin, length))
     }
 
     #[allow(unrooted_must_root)]
@@ -321,7 +324,7 @@ impl HTMLInputElementMethods for HTMLInputElement {
 
     // https://html.spec.whatwg.org/multipage/#dom-input-checked
     fn Checked(&self) -> bool {
-        self.upcast::<Element>().get_state().contains(IN_CHECKED_STATE)
+        self.upcast::<Element>().state().contains(IN_CHECKED_STATE)
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-input-checked
@@ -400,7 +403,7 @@ impl HTMLInputElementMethods for HTMLInputElement {
         }
 
         self.value_changed.set(true);
-        self.force_relayout();
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
         Ok(())
     }
 
@@ -463,7 +466,7 @@ impl HTMLInputElementMethods for HTMLInputElement {
 
     // https://html.spec.whatwg.org/multipage/#dom-input-indeterminate
     fn Indeterminate(&self) -> bool {
-        self.upcast::<Element>().get_state().contains(IN_INDETERMINATE_STATE)
+        self.upcast::<Element>().state().contains(IN_INDETERMINATE_STATE)
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-input-indeterminate
@@ -585,11 +588,6 @@ fn in_same_group(other: &HTMLInputElement, owner: Option<&HTMLFormElement>,
 }
 
 impl HTMLInputElement {
-    fn force_relayout(&self) {
-        let doc = document_from_node(self);
-        doc.content_changed(self.upcast(), NodeDamage::OtherNodeDamage)
-    }
-
     fn radio_group_updated(&self, group: Option<&Atom>) {
         if self.Checked() {
             broadcast_radio_checked(self, group);
@@ -653,7 +651,7 @@ impl HTMLInputElement {
                                     self.get_radio_group_name().as_ref());
         }
 
-        self.force_relayout();
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
         //TODO: dispatch change event
     }
 
@@ -665,7 +663,7 @@ impl HTMLInputElement {
     fn mutable(&self) -> bool {
         // https://html.spec.whatwg.org/multipage/#the-input-element:concept-fe-mutable
         // https://html.spec.whatwg.org/multipage/#the-readonly-attribute:concept-fe-mutable
-        !(self.upcast::<Element>().get_disabled_state() || self.ReadOnly())
+        !(self.upcast::<Element>().disabled_state() || self.ReadOnly())
     }
 
     // https://html.spec.whatwg.org/multipage/#the-input-element:concept-form-reset-control
@@ -683,7 +681,7 @@ impl HTMLInputElement {
             .expect("Failed to reset input value to default.");
         self.value_dirty.set(false);
         self.value_changed.set(false);
-        self.force_relayout();
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
     }
 }
 
@@ -861,10 +859,6 @@ impl VirtualMethods for HTMLInputElement {
         }
 
         if event.type_() == atom!("click") && !event.DefaultPrevented() {
-            if let InputType::InputRadio = self.input_type.get() {
-                self.update_checked_state(true, true);
-            }
-
             // TODO: Dispatch events for non activatable inputs
             // https://html.spec.whatwg.org/multipage/#common-input-element-events
 
@@ -892,11 +886,11 @@ impl VirtualMethods for HTMLInputElement {
                                 ChangeEventRunnable::send(self.upcast::<Node>());
                             }
 
-                            self.force_relayout();
+                            self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
                             event.PreventDefault();
                         }
                         RedrawSelection => {
-                            self.force_relayout();
+                            self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
                             event.PreventDefault();
                         }
                         Nothing => (),
@@ -907,6 +901,8 @@ impl VirtualMethods for HTMLInputElement {
 }
 
 impl FormControl for HTMLInputElement {}
+
+impl Validatable for HTMLInputElement {}
 
 impl Activatable for HTMLInputElement {
     fn as_element(&self) -> &Element {

@@ -18,6 +18,7 @@ use dom::htmlformelement::{FormControl, FormDatum, HTMLFormElement};
 use dom::htmloptionelement::HTMLOptionElement;
 use dom::node::{Node, UnbindContext, window_from_node};
 use dom::nodelist::NodeList;
+use dom::validation::Validatable;
 use dom::validitystate::ValidityState;
 use dom::virtualmethods::VirtualMethods;
 use string_cache::Atom;
@@ -66,7 +67,7 @@ impl HTMLSelectElement {
                 last_selected = Some(Root::from_ref(opt.r()));
             }
             let element = opt.upcast::<Element>();
-            if first_enabled.is_none() && !element.get_disabled_state() {
+            if first_enabled.is_none() && !element.disabled_state() {
                 first_enabled = Some(Root::from_ref(opt.r()));
             }
         }
@@ -89,7 +90,7 @@ impl HTMLSelectElement {
         }
         for opt in node.traverse_preorder().filter_map(Root::downcast::<HTMLOptionElement>) {
             let element = opt.upcast::<Element>();
-            if opt.Selected() && element.get_enabled_state() {
+            if opt.Selected() && element.enabled_state() {
                 data_set.push(FormDatum {
                     ty: self.Type(),
                     name: self.Name(),
@@ -130,7 +131,7 @@ impl HTMLSelectElementMethods for HTMLSelectElement {
     // https://html.spec.whatwg.org/multipage/#dom-cva-validity
     fn Validity(&self) -> Root<ValidityState> {
         let window = window_from_node(self);
-        ValidityState::new(window.r())
+        ValidityState::new(window.r(), self.upcast())
     }
 
     // Note: this function currently only exists for union.html.
@@ -234,3 +235,5 @@ impl VirtualMethods for HTMLSelectElement {
 }
 
 impl FormControl for HTMLSelectElement {}
+
+impl Validatable for HTMLSelectElement {}

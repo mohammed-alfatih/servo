@@ -14,6 +14,7 @@ use resource_files::set_resources_path;
 use std::cmp;
 use std::default::Default;
 use std::env;
+use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -145,6 +146,14 @@ pub struct Opts {
     /// Whether we're running inside the sandbox.
     pub sandbox: bool,
 
+    /// Probability of randomly closing a pipeline,
+    /// used for testing the hardening of the constellation.
+    pub random_pipeline_closure_probability: Option<f32>,
+
+    /// The seed for the RNG used to randomly close pipelines,
+    /// used for testing the hardening of the constellation.
+    pub random_pipeline_closure_seed: Option<usize>,
+
     /// Dumps the flow tree after a layout.
     pub dump_flow_tree: bool,
 
@@ -153,9 +162,6 @@ pub struct Opts {
 
     /// Dumps the display list in JSON form after a layout.
     pub dump_display_list_json: bool,
-
-    /// Dumps the display list after optimization (post layout, at painting time).
-    pub dump_display_list_optimized: bool,
 
     /// Dumps the layer tree when it changes.
     pub dump_layer_tree: bool,
@@ -187,8 +193,14 @@ pub struct Opts {
     /// True if WebRender should use multisample antialiasing.
     pub use_msaa: bool,
 
+    /// Directory path for persistent session
+    pub profile_dir: Option<String>,
+
     // Which rendering API to use.
     pub render_api: RenderApi,
+
+    // don't skip any backtraces on panic
+    pub full_backtraces: bool,
 }
 
 fn print_usage(app: &str, opts: &Options) {
@@ -220,9 +232,6 @@ pub struct DebugOptions {
 
     /// Print the display list in JSON form.
     pub dump_display_list_json: bool,
-
-    /// Print optimized display list (at paint time).
-    pub dump_display_list_optimized: bool,
 
     /// Print the layer tree whenever it changes.
     pub dump_layer_tree: bool,
@@ -278,6 +287,10 @@ pub struct DebugOptions {
 
     /// Use multisample antialiasing in WebRender.
     pub use_msaa: bool,
+
+    // don't skip any backtraces on panic
+    pub full_backtraces: bool,
+
 }
 
 
@@ -294,7 +307,6 @@ impl DebugOptions {
                 "dump-flow-tree" => debug_options.dump_flow_tree = true,
                 "dump-display-list" => debug_options.dump_display_list = true,
                 "dump-display-list-json" => debug_options.dump_display_list_json = true,
-                "dump-display-list-optimized" => debug_options.dump_display_list_optimized = true,
                 "dump-layer-tree" => debug_options.dump_layer_tree = true,
                 "relayout-event" => debug_options.relayout_event = true,
                 "profile-script-events" => debug_options.profile_script_events = true,
@@ -313,6 +325,7 @@ impl DebugOptions {
                 "disable-vsync" => debug_options.disable_vsync = true,
                 "wr-stats" => debug_options.webrender_stats = true,
                 "msaa" => debug_options.use_msaa = true,
+                "full-backtraces" => debug_options.full_backtraces = true,
                 "" => {},
                 _ => return Err(option)
             };
@@ -336,7 +349,6 @@ pub fn print_debug_usage(app: &str) -> ! {
     print_option("dump-flow-tree", "Print the flow tree after each layout.");
     print_option("dump-display-list", "Print the display list after each layout.");
     print_option("dump-display-list-json", "Print the display list in JSON form.");
-    print_option("dump-display-list-optimized", "Print optimized display list (at paint time).");
     print_option("dump-layer-tree", "Print the layer tree whenever it changes.");
     print_option("relayout-event", "Print notifications when there is a relayout.");
     print_option("profile-script-events", "Enable profiling of script-related events.");
@@ -360,6 +372,7 @@ pub fn print_debug_usage(app: &str) -> ! {
                  "Disable vsync mode in the compositor to allow profiling at more than monitor refresh rate");
     print_option("wr-stats", "Show WebRender profiler on screen.");
     print_option("msaa", "Use multisample antialiasing in WebRender.");
+    print_option("full-backtraces", "Print full backtraces for all errors");
 
     println!("");
 
@@ -481,11 +494,12 @@ pub fn default_opts() -> Opts {
         initial_window_size: Size2D::typed(800, 600),
         user_agent: default_user_agent_string(DEFAULT_USER_AGENT),
         multiprocess: false,
+        random_pipeline_closure_probability: None,
+        random_pipeline_closure_seed: None,
         sandbox: false,
         dump_flow_tree: false,
         dump_display_list: false,
         dump_display_list_json: false,
-        dump_display_list_optimized: false,
         dump_layer_tree: false,
         relayout_event: false,
         profile_script_events: false,
@@ -499,6 +513,8 @@ pub fn default_opts() -> Opts {
         webrender_stats: false,
         use_msaa: false,
         render_api: DEFAULT_RENDER_API,
+        profile_dir: None,
+        full_backtraces: false,
     }
 }
 
@@ -524,6 +540,7 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
                   "A user stylesheet to be added to every document", "file.css");
     opts.optflag("z", "headless", "Headless mode");
     opts.optflag("f", "hard-fail", "Exit on thread failure instead of displaying about:failure");
+    opts.optflag("F", "soft-fail", "Display about:failure on thread failure instead of exiting");
     opts.optflagopt("", "devtools", "Start remote devtools server on port", "6000");
     opts.optflagopt("", "webdriver", "Start remote WebDriver server on port", "7000");
     opts.optopt("", "resolution", "Set window resolution.", "800x600");
@@ -533,6 +550,11 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
                 "NCSA Mosaic/1.0 (X11;SunOS 4.1.4 sun4m)");
     opts.optflag("M", "multiprocess", "Run in multiprocess mode");
     opts.optflag("S", "sandbox", "Run in a sandbox if multiprocess");
+    opts.optopt("",
+                "random-pipeline-closure-probability",
+                "Probability of randomly closing a pipeline (for testing constellation hardening).",
+                "0.0");
+    opts.optopt("", "random-pipeline-closure-seed", "A fixed seed for repeatbility of random pipeline closure.", "");
     opts.optopt("Z", "debug",
                 "A comma-separated string of debug options. Pass help to show available options.", "");
     opts.optflag("h", "help", "Print this message");
@@ -544,6 +566,8 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
     opts.optflag("b", "no-native-titlebar", "Do not use native titlebar");
     opts.optflag("w", "webrender", "Use webrender backend");
     opts.optopt("G", "graphics", "Select graphics backend (gl or es2)", "gl");
+    opts.optopt("", "profile-dir",
+                    "optional directory path for user sessions", "");
 
     let opt_match = match opts.parse(args) {
         Ok(m) => m,
@@ -556,6 +580,12 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         print_usage(app_name, &opts);
         process::exit(0);
     };
+
+    if let Some(ref profile_dir) = opt_match.opt_str("profile-dir") {
+        if let Err(why) = fs::create_dir_all(profile_dir) {
+            error!("Couldn't create/open {:?}: {:?}", Path::new(profile_dir).to_string_lossy(), why);
+        }
+    }
 
     // If this is the content process, we'll receive the real options over IPC. So just fill in
     // some dummy options for now.
@@ -605,36 +635,52 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
     };
 
     let tile_size: usize = match opt_match.opt_str("s") {
-        Some(tile_size_str) => tile_size_str.parse().expect("Error parsing option: -s"),
+        Some(tile_size_str) => tile_size_str.parse()
+            .unwrap_or_else(|err| args_fail(&format!("Error parsing option: -s ({})", err))),
         None => 512,
     };
 
     let device_pixels_per_px = opt_match.opt_str("device-pixel-ratio").map(|dppx_str|
-        dppx_str.parse().expect("Error parsing option: --device-pixel-ratio")
+        dppx_str.parse()
+            .unwrap_or_else(|err| args_fail(&format!("Error parsing option: --device-pixel-ratio ({})", err)))
     );
 
     let mut paint_threads: usize = match opt_match.opt_str("t") {
-        Some(paint_threads_str) => paint_threads_str.parse().expect("Error parsing option: -t"),
+        Some(paint_threads_str) => paint_threads_str.parse()
+            .unwrap_or_else(|err| args_fail(&format!("Error parsing option: -t ({})", err))),
         None => cmp::max(num_cpus::get() * 3 / 4, 1),
     };
 
     // If only the flag is present, default to a 5 second period for both profilers.
     let time_profiler_period = opt_match.opt_default("p", "5").map(|period| {
-        period.parse().expect("Error parsing option: -p")
+        period.parse().unwrap_or_else(|err| args_fail(&format!("Error parsing option: -p ({})", err)))
     });
 
     let mem_profiler_period = opt_match.opt_default("m", "5").map(|period| {
-        period.parse().expect("Error parsing option: -m")
+        period.parse().unwrap_or_else(|err| args_fail(&format!("Error parsing option: -m ({})", err)))
     });
 
     let gpu_painting = !FORCE_CPU_PAINTING && opt_match.opt_present("g");
 
     let mut layout_threads: usize = match opt_match.opt_str("y") {
-        Some(layout_threads_str) => layout_threads_str.parse().expect("Error parsing option: -y"),
+        Some(layout_threads_str) => layout_threads_str.parse()
+            .unwrap_or_else(|err| args_fail(&format!("Error parsing option: -y ({})", err))),
         None => cmp::max(num_cpus::get() * 3 / 4, 1),
     };
 
     let nonincremental_layout = opt_match.opt_present("i");
+
+    let random_pipeline_closure_probability = opt_match.opt_str("random-pipeline-closure-probability").map(|prob|
+        prob.parse().unwrap_or_else(|err| {
+            args_fail(&format!("Error parsing option: --random-pipeline-closure-probability ({})", err))
+        })
+    );
+
+    let random_pipeline_closure_seed = opt_match.opt_str("random-pipeline-closure-seed").map(|seed|
+        seed.parse().unwrap_or_else(|err| {
+            args_fail(&format!("Error parsing option: --random-pipeline-closure-seed ({})", err))
+        })
+    );
 
     let mut bubble_inline_sizes_separately = debug_options.bubble_widths;
     if debug_options.trace_layout {
@@ -644,17 +690,17 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
     }
 
     let devtools_port = opt_match.opt_default("devtools", "6000").map(|port| {
-        port.parse().expect("Error parsing option: --devtools")
+        port.parse().unwrap_or_else(|err| args_fail(&format!("Error parsing option: --devtools ({})", err)))
     });
 
     let webdriver_port = opt_match.opt_default("webdriver", "7000").map(|port| {
-        port.parse().expect("Error parsing option: --webdriver")
+        port.parse().unwrap_or_else(|err| args_fail(&format!("Error parsing option: --webdriver ({})", err)))
     });
 
     let initial_window_size = match opt_match.opt_str("resolution") {
         Some(res_string) => {
             let res: Vec<u32> = res_string.split('x').map(|r| {
-                r.parse().expect("Error parsing option: --resolution")
+                r.parse().unwrap_or_else(|err| args_fail(&format!("Error parsing option: --resolution ({})", err)))
             }).collect();
             Size2D::typed(res[0], res[1])
         }
@@ -686,7 +732,13 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         (contents, url)
     }).collect();
 
-    let use_webrender = opt_match.opt_present("w") && !opt_match.opt_present("z");
+    let do_not_use_native_titlebar =
+        opt_match.opt_present("b") ||
+        !prefs::get_pref("shell.native-titlebar.enabled").as_boolean().unwrap();
+
+    let use_webrender =
+        (prefs::get_pref("gfx.webrender.enabled").as_boolean().unwrap() || opt_match.opt_present("w")) &&
+        !opt_match.opt_present("z");
 
     let render_api = match opt_match.opt_str("G") {
         Some(ref ga) if ga == "gl" => RenderApi::GL,
@@ -713,7 +765,7 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         gc_profile: debug_options.gc_profile,
         load_webfonts_synchronously: debug_options.load_webfonts_synchronously,
         headless: opt_match.opt_present("z"),
-        hard_fail: opt_match.opt_present("f"),
+        hard_fail: opt_match.opt_present("f") && !opt_match.opt_present("F"),
         bubble_inline_sizes_separately: bubble_inline_sizes_separately,
         profile_script_events: debug_options.profile_script_events,
         profile_heartbeats: debug_options.profile_heartbeats,
@@ -724,6 +776,8 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         user_agent: user_agent,
         multiprocess: opt_match.opt_present("M"),
         sandbox: opt_match.opt_present("S"),
+        random_pipeline_closure_probability: random_pipeline_closure_probability,
+        random_pipeline_closure_seed: random_pipeline_closure_seed,
         render_api: render_api,
         show_debug_borders: debug_options.show_compositor_borders,
         show_debug_fragment_borders: debug_options.show_fragment_borders,
@@ -735,25 +789,37 @@ pub fn from_cmdline_args(args: &[String]) -> ArgumentParsingResult {
         dump_flow_tree: debug_options.dump_flow_tree,
         dump_display_list: debug_options.dump_display_list,
         dump_display_list_json: debug_options.dump_display_list_json,
-        dump_display_list_optimized: debug_options.dump_display_list_optimized,
         dump_layer_tree: debug_options.dump_layer_tree,
         relayout_event: debug_options.relayout_event,
         disable_share_style_cache: debug_options.disable_share_style_cache,
         convert_mouse_to_touch: debug_options.convert_mouse_to_touch,
         exit_after_load: opt_match.opt_present("x"),
-        no_native_titlebar: opt_match.opt_present("b"),
+        no_native_titlebar: do_not_use_native_titlebar,
         enable_vsync: !debug_options.disable_vsync,
         use_webrender: use_webrender,
         webrender_stats: debug_options.webrender_stats,
         use_msaa: debug_options.use_msaa,
+        profile_dir: opt_match.opt_str("profile-dir"),
+        full_backtraces: debug_options.full_backtraces,
     };
 
     set_defaults(opts);
 
-    // This must happen after setting the default options, since the prefs rely on
+    // These must happen after setting the default options, since the prefs rely on
     // on the resource path.
+    // Note that command line preferences have the highest precedence
+    if get().profile_dir.is_some() {
+        prefs::add_user_prefs();
+    }
     for pref in opt_match.opt_strs("pref").iter() {
-        prefs::set_pref(pref, PrefValue::Boolean(true));
+        let split: Vec<&str> = pref.splitn(2, '=').collect();
+        let pref_name = split[0];
+        let value = split.get(1);
+        match value {
+            Some(&"false") => prefs::set_pref(pref_name, PrefValue::Boolean(false)),
+            Some(&"true") | None => prefs::set_pref(pref_name, PrefValue::Boolean(true)),
+            _ => prefs::set_pref(pref_name, PrefValue::String(value.unwrap().to_string()))
+        };
     }
 
     ArgumentParsingResult::ChromeProcess
@@ -812,7 +878,7 @@ pub fn parse_url_or_filename(cwd: &Path, input: &str) -> Result<Url, ()> {
     match Url::parse(input) {
         Ok(url) => Ok(url),
         Err(url::ParseError::RelativeUrlWithoutBase) => {
-            Ok(Url::from_file_path(&*cwd.join(input)).unwrap())
+            Url::from_file_path(&*cwd.join(input))
         }
         Err(_) => Err(()),
     }

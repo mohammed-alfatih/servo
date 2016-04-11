@@ -5,6 +5,8 @@
 #![feature(plugin)]
 #![plugin(plugins)]
 
+#![deny(unsafe_code)]
+
 extern crate azure;
 extern crate canvas_traits;
 extern crate core;
@@ -21,5 +23,4 @@ extern crate util;
 extern crate webrender_traits;
 
 pub mod canvas_paint_thread;
-mod premultiplytable;
 pub mod webgl_paint_thread;

@@ -37,7 +37,8 @@ use hyper::header::ContentType;
 use hyper::method::Method;
 use hyper::mime;
 use msg::constellation_msg::{LoadData, PipelineId};
-use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable, ScriptChan};
+use script_runtime::ScriptChan;
+use script_thread::{MainThreadScriptChan, MainThreadScriptMsg, Runnable};
 use std::borrow::ToOwned;
 use std::cell::Cell;
 use std::sync::mpsc::Sender;
@@ -399,7 +400,7 @@ impl HTMLFormElement {
         for child in node.traverse_preorder() {
             // Step 3.1: The field element is disabled.
             match child.downcast::<Element>() {
-                Some(el) if !el.get_disabled_state() => (),
+                Some(el) if !el.disabled_state() => (),
                 _ => continue,
             }
 

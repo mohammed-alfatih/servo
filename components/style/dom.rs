@@ -37,20 +37,21 @@ impl OpaqueNode {
     /// Returns the address of this node, for debugging purposes.
     #[inline]
     pub fn id(&self) -> usize {
-        let OpaqueNode(pointer) = *self;
-        pointer
+        self.0
     }
 }
 
 pub trait TRestyleDamage : BitOr<Output=Self> + Copy {
-    fn compute(old: Option<&Arc<ComputedValues>>, new: &ComputedValues) -> Self;
+    type ConcreteComputedValues: ComputedValues;
+    fn compute(old: Option<&Arc<Self::ConcreteComputedValues>>, new: &Self::ConcreteComputedValues) -> Self;
     fn rebuild_and_reflow() -> Self;
 }
 
 pub trait TNode : Sized + Copy + Clone {
     type ConcreteElement: TElement<ConcreteNode = Self, ConcreteDocument = Self::ConcreteDocument>;
     type ConcreteDocument: TDocument<ConcreteNode = Self, ConcreteElement = Self::ConcreteElement>;
-    type ConcreteRestyleDamage: TRestyleDamage;
+    type ConcreteRestyleDamage: TRestyleDamage<ConcreteComputedValues = Self::ConcreteComputedValues>;
+    type ConcreteComputedValues: ComputedValues;
 
     fn to_unsafe(&self) -> UnsafeNode;
     unsafe fn from_unsafe(n: &UnsafeNode) -> Self;
@@ -135,17 +136,20 @@ pub trait TNode : Sized + Copy + Clone {
     /// Borrows the PrivateStyleData without checks.
     #[inline(always)]
     unsafe fn borrow_data_unchecked(&self)
-        -> Option<*const PrivateStyleData<<Self::ConcreteElement as Element>::Impl>>;
+        -> Option<*const PrivateStyleData<<Self::ConcreteElement as Element>::Impl,
+                                          Self::ConcreteComputedValues>>;
 
     /// Borrows the PrivateStyleData immutably. Fails on a conflicting borrow.
     #[inline(always)]
     fn borrow_data(&self)
-        -> Option<Ref<PrivateStyleData<<Self::ConcreteElement as Element>::Impl>>>;
+        -> Option<Ref<PrivateStyleData<<Self::ConcreteElement as Element>::Impl,
+                                       Self::ConcreteComputedValues>>>;
 
     /// Borrows the PrivateStyleData mutably. Fails on a conflicting borrow.
     #[inline(always)]
     fn mutate_data(&self)
-        -> Option<RefMut<PrivateStyleData<<Self::ConcreteElement as Element>::Impl>>>;
+        -> Option<RefMut<PrivateStyleData<<Self::ConcreteElement as Element>::Impl,
+                                          Self::ConcreteComputedValues>>>;
 
     /// Get the description of how to account for recent style changes.
     fn restyle_damage(self) -> Self::ConcreteRestyleDamage;
@@ -166,7 +170,7 @@ pub trait TNode : Sized + Copy + Clone {
 
     /// Returns the style results for the given node. If CSS selector matching
     /// has not yet been performed, fails.
-    fn style(&self) -> Ref<Arc<ComputedValues>> {
+    fn style(&self) -> Ref<Arc<Self::ConcreteComputedValues>> {
         Ref::map(self.borrow_data().unwrap(), |data| data.style.as_ref().unwrap())
     }
 

@@ -420,7 +420,7 @@ impl Node {
         self.flags.set(flags);
     }
 
-    pub fn get_has_changed(&self) -> bool {
+    pub fn has_changed(&self) -> bool {
         self.get_flag(HAS_CHANGED)
     }
 
@@ -428,7 +428,7 @@ impl Node {
         self.set_flag(HAS_CHANGED, state)
     }
 
-    pub fn get_is_dirty(&self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.get_flag(IS_DIRTY)
     }
 
@@ -436,7 +436,7 @@ impl Node {
         self.set_flag(IS_DIRTY, state)
     }
 
-    pub fn get_has_dirty_descendants(&self) -> bool {
+    pub fn has_dirty_descendants(&self) -> bool {
         self.get_flag(HAS_DIRTY_DESCENDANTS)
     }
 
@@ -454,7 +454,7 @@ impl Node {
         // the document's version, but we do have to deal with the case where the node has moved
         // document, so may have a higher version count than its owning document.
         let doc: Root<Node> = Root::upcast(self.owner_doc());
-        let version = max(self.get_inclusive_descendants_version(), doc.get_inclusive_descendants_version()) + 1;
+        let version = max(self.inclusive_descendants_version(), doc.inclusive_descendants_version()) + 1;
         for ancestor in self.inclusive_ancestors() {
             ancestor.inclusive_descendants_version.set(version);
         }
@@ -475,14 +475,14 @@ impl Node {
             NodeDamage::OtherNodeDamage => self.set_has_changed(true),
         }
 
-        if self.get_is_dirty() && !force_ancestors {
+        if self.is_dirty() && !force_ancestors {
             return
         }
 
         // 2. Dirty descendants.
         fn dirty_subtree(node: &Node) {
             // Stop if this subtree is already dirty.
-            if node.get_is_dirty() { return }
+            if node.is_dirty() { return }
 
             node.set_flag(IS_DIRTY | HAS_DIRTY_DESCENDANTS, true);
 
@@ -495,13 +495,13 @@ impl Node {
 
         // 4. Dirty ancestors.
         for ancestor in self.ancestors() {
-            if !force_ancestors && ancestor.get_has_dirty_descendants() { break }
+            if !force_ancestors && ancestor.has_dirty_descendants() { break }
             ancestor.set_has_dirty_descendants(true);
         }
     }
 
     /// The maximum version number of this node's descendants, including itself
-    pub fn get_inclusive_descendants_version(&self) -> u64 {
+    pub fn inclusive_descendants_version(&self) -> u64 {
         self.inclusive_descendants_version.get()
     }
 
@@ -570,15 +570,15 @@ impl Node {
         TrustedNodeAddress(&*self as *const Node as *const libc::c_void)
     }
 
-    pub fn get_bounding_content_box(&self) -> Rect<Au> {
+    pub fn bounding_content_box(&self) -> Rect<Au> {
         window_from_node(self).content_box_query(self.to_trusted_node_address())
     }
 
-    pub fn get_content_boxes(&self) -> Vec<Rect<Au>> {
+    pub fn content_boxes(&self) -> Vec<Rect<Au>> {
         window_from_node(self).content_boxes_query(self.to_trusted_node_address())
     }
 
-    pub fn get_client_rect(&self) -> Rect<i32> {
+    pub fn client_rect(&self) -> Rect<i32> {
         window_from_node(self).client_rect_query(self.to_trusted_node_address())
     }
 
@@ -586,7 +586,7 @@ impl Node {
     // https://drafts.csswg.org/cssom-view/#dom-element-scrollheight
     // https://drafts.csswg.org/cssom-view/#dom-element-scrolltop
     // https://drafts.csswg.org/cssom-view/#dom-element-scrollleft
-    pub fn get_scroll_area(&self) -> Rect<i32> {
+    pub fn scroll_area(&self) -> Rect<i32> {
         // Step 1
         let document = self.owner_doc();
         // Step 3
@@ -798,15 +798,15 @@ impl Node {
         }
     }
 
-    pub fn get_unique_id(&self) -> String {
-        self.unique_id.borrow().to_simple_string()
+    pub fn unique_id(&self) -> String {
+        self.unique_id.borrow().simple().to_string()
     }
 
     pub fn summarize(&self) -> NodeInfo {
         NodeInfo {
-            uniqueId: self.get_unique_id(),
+            uniqueId: self.unique_id(),
             baseURI: String::from(self.BaseURI()),
-            parent: self.GetParentNode().map_or("".to_owned(), |node| node.get_unique_id()),
+            parent: self.GetParentNode().map_or("".to_owned(), |node| node.unique_id()),
             nodeType: self.NodeType(),
             namespaceURI: String::new(), //FIXME
             nodeName: String::from(self.NodeName()),
@@ -1166,34 +1166,20 @@ impl Iterator for PrecedingNodeIterator {
             Some(current) => current,
         };
 
-        if self.root == current {
-            self.current = None;
-            return None
-        }
-
-        let node = current;
-        if let Some(previous_sibling) = node.GetPreviousSibling() {
+        self.current = if self.root == current {
+            None
+        } else if let Some(previous_sibling) = current.GetPreviousSibling() {
             if self.root == previous_sibling {
-                self.current = None;
-                return None
+                None
+            } else if let Some(last_child) = previous_sibling.descending_last_children().last() {
+                Some(last_child)
+            } else {
+                Some(previous_sibling)
             }
-
-            if let Some(last_child) = previous_sibling.descending_last_children().last() {
-                self.current = Some(last_child);
-                return previous_sibling.descending_last_children().last()
-            }
-
-            self.current = Some(previous_sibling);
-            return node.GetPreviousSibling()
+        } else {
+            current.GetParentNode()
         };
-
-        if let Some(parent_node) = node.GetParentNode() {
-            self.current = Some(parent_node);
-            return node.GetParentNode()
-        }
-
-        self.current = None;
-        None
+        self.current.clone()
     }
 }
 
@@ -1696,7 +1682,7 @@ impl Node {
             NodeTypeId::Document(_) => {
                 let node_doc = node.downcast::<Document>().unwrap();
                 let copy_doc = copy.downcast::<Document>().unwrap();
-                copy_doc.set_encoding_name(node_doc.encoding_name().clone());
+                copy_doc.set_encoding(node_doc.encoding());
                 copy_doc.set_quirks_mode(node_doc.quirks_mode());
             },
             NodeTypeId::Element(..) => {

@@ -10,9 +10,9 @@ use dom::bindings::codegen::Bindings::BlobBinding::BlobMethods;
 use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
 use dom::bindings::codegen::Bindings::XMLHttpRequestBinding;
+use dom::bindings::codegen::Bindings::XMLHttpRequestBinding::BodyInit;
 use dom::bindings::codegen::Bindings::XMLHttpRequestBinding::XMLHttpRequestMethods;
 use dom::bindings::codegen::Bindings::XMLHttpRequestBinding::XMLHttpRequestResponseType;
-use dom::bindings::codegen::UnionTypes::BlobOrStringOrURLSearchParams;
 use dom::bindings::conversions::{ToJSValConvertible};
 use dom::bindings::error::{Error, ErrorResult, Fallible};
 use dom::bindings::global::{GlobalRef, GlobalRoot};
@@ -50,7 +50,7 @@ use net_traits::{LoadConsumer, LoadContext, LoadData, ResourceCORSData, Resource
 use network_listener::{NetworkListener, PreInvoke};
 use parse::html::{ParseContext, parse_html};
 use parse::xml::{self, parse_xml};
-use script_thread::{ScriptChan, ScriptPort};
+use script_runtime::{ScriptChan, ScriptPort};
 use std::ascii::AsciiExt;
 use std::borrow::ToOwned;
 use std::cell::{Cell, RefCell};
@@ -62,9 +62,8 @@ use time;
 use timers::{OneshotTimerCallback, OneshotTimerHandle};
 use url::Url;
 use url::percent_encoding::{utf8_percent_encode, USERNAME_ENCODE_SET, PASSWORD_ENCODE_SET};
+use util::prefs;
 use util::str::DOMString;
-
-pub type SendParam = BlobOrStringOrURLSearchParams;
 
 #[derive(JSTraceable, PartialEq, Copy, Clone, HeapSizeOf)]
 enum XMLHttpRequestState {
@@ -118,7 +117,7 @@ pub struct XMLHttpRequest {
     timeout: Cell<u32>,
     with_credentials: Cell<bool>,
     upload: JS<XMLHttpRequestUpload>,
-    response_url: String,
+    response_url: DOMRefCell<String>,
     status: Cell<u16>,
     status_text: DOMRefCell<ByteString>,
     response: DOMRefCell<ByteString>,
@@ -160,7 +159,7 @@ impl XMLHttpRequest {
             timeout: Cell::new(0u32),
             with_credentials: Cell::new(false),
             upload: JS::from_rooted(&XMLHttpRequestUpload::new(global)),
-            response_url: String::from(""),
+            response_url: DOMRefCell::new(String::from("")),
             status: Cell::new(0),
             status_text: DOMRefCell::new(ByteString::new(vec!())),
             response: DOMRefCell::new(ByteString::new(vec!())),
@@ -351,7 +350,7 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
                 }
 
                 // Step 2
-                let base = self.global().r().get_url();
+                let base = self.global().r().api_base_url();
                 // Step 6
                 let mut parsed_url = match base.join(&url.0) {
                     Ok(parsed) => parsed,
@@ -529,7 +528,7 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
     }
 
     // https://xhr.spec.whatwg.org/#the-send()-method
-    fn Send(&self, data: Option<SendParam>) -> ErrorResult {
+    fn Send(&self, data: Option<BodyInit>) -> ErrorResult {
         // Step 1, 2
         if self.ready_state.get() != XMLHttpRequestState::Opened || self.send_flag.get() {
             return Err(Error::InvalidState);
@@ -625,7 +624,8 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
                                                   load_data.url.clone(),
                                                   mode,
                                                   load_data.method.clone(),
-                                                  combined_headers);
+                                                  combined_headers,
+                                                  true);
         match cors_request {
             Ok(None) => {
                 let mut buf = String::new();
@@ -691,7 +691,7 @@ impl XMLHttpRequestMethods for XMLHttpRequest {
 
     // https://xhr.spec.whatwg.org/#the-responseurl-attribute
     fn ResponseURL(&self) -> USVString {
-        USVString(self.response_url.clone())
+        USVString(self.response_url.borrow().clone())
     }
 
     // https://xhr.spec.whatwg.org/#the-status-attribute
@@ -866,15 +866,36 @@ impl XMLHttpRequest {
     fn process_headers_available(&self, cors_request: Option<CORSRequest>,
                                  gen_id: GenerationId, metadata: Metadata) -> Result<(), Error> {
 
-        if let Some(ref req) = cors_request {
-            match metadata.headers {
-                Some(ref h) if allow_cross_origin_request(req, h) => {},
-                _ => {
-                    self.process_partial_response(XHRProgress::Errored(gen_id, Error::Network));
-                    return Err(Error::Network);
+        let bypass_cross_origin_check = {
+            // We want to be able to do cross-origin requests in browser.html.
+            // If the XHR happens in a top level window and the mozbrowser
+            // preference is enabled, we allow bypassing the CORS check.
+            // This is a temporary measure until we figure out Servo privilege
+            // story. See https://github.com/servo/servo/issues/9582
+            if let GlobalRoot::Window(win) = self.global() {
+                let is_root_pipeline = win.parent_info().is_none();
+                let is_mozbrowser_enabled = prefs::get_pref("dom.mozbrowser.enabled").as_boolean().unwrap_or(false);
+                is_root_pipeline && is_mozbrowser_enabled
+            } else {
+                false
+            }
+        };
+
+        if !bypass_cross_origin_check {
+            if let Some(ref req) = cors_request {
+                match metadata.headers {
+                    Some(ref h) if allow_cross_origin_request(req, h) => {},
+                    _ => {
+                        self.process_partial_response(XHRProgress::Errored(gen_id, Error::Network));
+                        return Err(Error::Network);
+                    }
                 }
             }
+        } else {
+            debug!("Bypassing cross origin check");
         }
+
+        *self.response_url.borrow_mut() = metadata.final_url.serialize_no_fragment();
 
         // XXXManishearth Clear cache entries in case of a network error
         self.process_partial_response(XHRProgress::HeadersReceived(gen_id,
@@ -980,6 +1001,7 @@ impl XMLHttpRequest {
 
                 // Subsubsteps 5-7
                 self.send_flag.set(false);
+
                 self.change_ready_state(XMLHttpRequestState::Done);
                 return_if_fetch_was_terminated!();
                 // Subsubsteps 10-12
@@ -1150,7 +1172,7 @@ impl XMLHttpRequest {
             _ => { return None; }
         }
         // Step 9
-        temp_doc.set_encoding_name(DOMString::from(charset.name()));
+        temp_doc.set_encoding(charset);
         // Step 13
         self.response_xml.set(Some(temp_doc.r()));
         return self.response_xml.get();
@@ -1278,7 +1300,8 @@ impl XMLHttpRequest {
               global: GlobalRef) -> ErrorResult {
         let cors_request = match cors_request {
             Err(_) => {
-                // Happens in case of cross-origin non-http URIs
+                // Happens in case of unsupported cross-origin URI schemes.
+                // Supported schemes are http, https, data, and about.
                 self.process_partial_response(XHRProgress::Errored(
                     self.generation_id.get(), Error::Network));
                 return Err(Error::Network);
@@ -1314,7 +1337,7 @@ impl XMLHttpRequest {
 
         if let Some(script_port) = script_port {
             loop {
-                global.process_event(script_port.recv());
+                global.process_event(script_port.recv().unwrap());
                 let context = context.lock().unwrap();
                 let sync_status = context.sync_status.borrow();
                 if let Some(ref status) = *sync_status {
@@ -1372,21 +1395,21 @@ impl XHRTimeoutCallback {
 trait Extractable {
     fn extract(&self) -> (Vec<u8>, Option<DOMString>);
 }
-impl Extractable for SendParam {
+impl Extractable for BodyInit {
     // https://fetch.spec.whatwg.org/#concept-bodyinit-extract
     fn extract(&self) -> (Vec<u8>, Option<DOMString>) {
         match *self {
-            BlobOrStringOrURLSearchParams::String(ref s) => {
+            BodyInit::String(ref s) => {
                 let encoding = UTF_8 as EncodingRef;
                 (encoding.encode(s, EncoderTrap::Replace).unwrap(),
                     Some(DOMString::from("text/plain;charset=UTF-8")))
             },
-            BlobOrStringOrURLSearchParams::URLSearchParams(ref usp) => {
+            BodyInit::URLSearchParams(ref usp) => {
                 // Default encoding is UTF-8.
                 (usp.serialize(None).into_bytes(),
                     Some(DOMString::from("application/x-www-form-urlencoded;charset=UTF-8")))
             },
-            BlobOrStringOrURLSearchParams::Blob(ref b) => {
+            BodyInit::Blob(ref b) => {
                 let data = b.get_data();
                 let content_type = if b.Type().as_ref().is_empty() {
                     None

@@ -47,7 +47,9 @@ use dom::htmlimageelement::{HTMLImageElement, LayoutHTMLImageElementHelpers};
 use dom::htmlinputelement::{HTMLInputElement, LayoutHTMLInputElementHelpers};
 use dom::htmllabelelement::HTMLLabelElement;
 use dom::htmllegendelement::HTMLLegendElement;
+use dom::htmlobjectelement::HTMLObjectElement;
 use dom::htmloptgroupelement::HTMLOptGroupElement;
+use dom::htmlselectelement::HTMLSelectElement;
 use dom::htmltablecellelement::{HTMLTableCellElement, HTMLTableCellElementLayoutHelpers};
 use dom::htmltableelement::{HTMLTableElement, HTMLTableElementLayoutHelpers};
 use dom::htmltablerowelement::{HTMLTableRowElement, HTMLTableRowElementLayoutHelpers};
@@ -60,6 +62,7 @@ use dom::node::{NodeDamage, SEQUENTIALLY_FOCUSABLE, UnbindContext};
 use dom::node::{document_from_node, window_from_node};
 use dom::nodelist::NodeList;
 use dom::text::Text;
+use dom::validation::Validatable;
 use dom::virtualmethods::{VirtualMethods, vtable_for};
 use html5ever::serialize;
 use html5ever::serialize::SerializeOpts;
@@ -788,8 +791,7 @@ impl Element {
         }
     }
 
-    // https://html.spec.whatwg.org/multipage/#root-element
-    pub fn get_root_element(&self) -> Root<Element> {
+    pub fn root_element(&self) -> Root<Element> {
         if self.node.is_in_doc() {
             self.upcast::<Node>()
                 .owner_doc()
@@ -862,7 +864,7 @@ impl Element {
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLSelectElement)) |
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTextAreaElement)) |
             NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLOptionElement)) => {
-                self.get_disabled_state()
+                self.disabled_state()
             }
             // TODO:
             // an optgroup element that has a disabled attribute
@@ -1075,7 +1077,7 @@ impl Element {
         }
         let url = self.get_string_attribute(local_name);
         let doc = document_from_node(self);
-        let base = doc.url();
+        let base = doc.base_url();
         // https://html.spec.whatwg.org/multipage/#reflect
         // XXXManishearth this doesn't handle `javascript:` urls properly
         match base.join(&url) {
@@ -1164,6 +1166,35 @@ impl Element {
     pub fn will_mutate_attr(&self) {
         let node = self.upcast::<Node>();
         node.owner_doc().element_attr_will_change(self);
+    }
+
+    // https://dom.spec.whatwg.org/#insert-adjacent
+    pub fn insert_adjacent(&self, where_: DOMString, node: &Node)
+                           -> Fallible<Option<Root<Node>>> {
+        let self_node = self.upcast::<Node>();
+        match &*where_ {
+            "beforebegin" => {
+                if let Some(parent) = self_node.GetParentNode() {
+                    Node::pre_insert(node, &parent, Some(self_node)).map(Some)
+                } else {
+                    Ok(None)
+                }
+            }
+            "afterbegin" => {
+                Node::pre_insert(node, &self_node, self_node.GetFirstChild().r()).map(Some)
+            }
+            "beforeend" => {
+                Node::pre_insert(node, &self_node, None).map(Some)
+            }
+            "afterend" => {
+                if let Some(parent) = self_node.GetParentNode() {
+                    Node::pre_insert(node, &parent, self_node.GetNextSibling().r()).map(Some)
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(Error::Syntax)
+        }
     }
 }
 
@@ -1399,7 +1430,7 @@ impl ElementMethods for Element {
     // https://drafts.csswg.org/cssom-view/#dom-element-getclientrects
     fn GetClientRects(&self) -> Root<DOMRectList> {
         let win = window_from_node(self);
-        let raw_rects = self.upcast::<Node>().get_content_boxes();
+        let raw_rects = self.upcast::<Node>().content_boxes();
         let rects = raw_rects.iter().map(|rect| {
             DOMRect::new(GlobalRef::Window(win.r()),
                          rect.origin.x.to_f64_px(),
@@ -1413,7 +1444,7 @@ impl ElementMethods for Element {
     // https://drafts.csswg.org/cssom-view/#dom-element-getboundingclientrect
     fn GetBoundingClientRect(&self) -> Root<DOMRect> {
         let win = window_from_node(self);
-        let rect = self.upcast::<Node>().get_bounding_content_box();
+        let rect = self.upcast::<Node>().bounding_content_box();
         DOMRect::new(GlobalRef::Window(win.r()),
                      rect.origin.x.to_f64_px(),
                      rect.origin.y.to_f64_px(),
@@ -1423,32 +1454,32 @@ impl ElementMethods for Element {
 
     // https://drafts.csswg.org/cssom-view/#dom-element-scrollwidth
     fn ScrollWidth(&self) -> i32 {
-        self.upcast::<Node>().get_scroll_area().size.width
+        self.upcast::<Node>().scroll_area().size.width
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-scrollheight
     fn ScrollHeight(&self) -> i32 {
-        self.upcast::<Node>().get_scroll_area().size.height
+        self.upcast::<Node>().scroll_area().size.height
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-clienttop
     fn ClientTop(&self) -> i32 {
-        self.upcast::<Node>().get_client_rect().origin.y
+        self.upcast::<Node>().client_rect().origin.y
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-clientleft
     fn ClientLeft(&self) -> i32 {
-        self.upcast::<Node>().get_client_rect().origin.x
+        self.upcast::<Node>().client_rect().origin.x
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-clientwidth
     fn ClientWidth(&self) -> i32 {
-        self.upcast::<Node>().get_client_rect().size.width
+        self.upcast::<Node>().client_rect().size.width
     }
 
     // https://drafts.csswg.org/cssom-view/#dom-element-clientheight
     fn ClientHeight(&self) -> i32 {
-        self.upcast::<Node>().get_client_rect().size.height
+        self.upcast::<Node>().client_rect().size.height
     }
 
     /// https://w3c.github.io/DOM-Parsing/#widl-Element-innerHTML
@@ -1617,6 +1648,23 @@ impl ElementMethods for Element {
             }
         }
     }
+
+    // https://dom.spec.whatwg.org/#dom-element-insertadjacentelement
+    fn InsertAdjacentElement(&self, where_: DOMString, element: &Element)
+                             -> Fallible<Option<Root<Element>>> {
+        let inserted_node = try!(self.insert_adjacent(where_, element.upcast()));
+        Ok(inserted_node.map(|node| Root::downcast(node).unwrap()))
+    }
+
+    // https://dom.spec.whatwg.org/#dom-element-insertadjacenttext
+    fn InsertAdjacentText(&self, where_: DOMString, data: DOMString)
+                          -> ErrorResult {
+        // Step 1.
+        let text = Text::new(data, &document_from_node(self));
+
+        // Step 2.
+        self.insert_adjacent(where_, text.upcast()).map(|_| ())
+    }
 }
 
 pub fn fragment_affecting_attributes() -> [Atom; 3] {
@@ -1641,7 +1689,7 @@ impl VirtualMethods for Element {
                         parse_style_attribute(&value, &doc.base_url(), win.css_error_reporter())
                     });
                 if node.is_in_doc() {
-                    doc.content_changed(node, NodeDamage::NodeStyleDamaged);
+                    node.dirty(NodeDamage::NodeStyleDamaged);
                 }
             },
             &atom!("id") => {
@@ -1679,7 +1727,7 @@ impl VirtualMethods for Element {
                    common_style_affecting_attributes().iter().any(|a| &a.atom == attr.local_name()) ||
                    rare_style_affecting_attributes().iter().any(|a| a == attr.local_name())
                 {
-                    doc.content_changed(node, NodeDamage::OtherNodeDamage);
+                    node.dirty(NodeDamage::OtherNodeDamage);
                 }
             },
             _ => {},
@@ -1826,7 +1874,7 @@ impl<'a> ::selectors::Element for Root<Element> {
             NonTSPseudoClass::Disabled |
             NonTSPseudoClass::Checked |
             NonTSPseudoClass::Indeterminate =>
-                Element::get_state(self).contains(pseudo_class.state_flag()),
+                Element::state(self).contains(pseudo_class.state_flag()),
         }
     }
 
@@ -1911,6 +1959,36 @@ impl Element {
                 None
             }
         })
+    }
+
+    // https://html.spec.whatwg.org/multipage/#category-submit
+    pub fn as_maybe_validatable(&self) -> Option<&Validatable> {
+        let element = match self.upcast::<Node>().type_id() {
+            NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLInputElement)) => {
+                let element = self.downcast::<HTMLInputElement>().unwrap();
+                Some(element as &Validatable)
+            },
+            NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLButtonElement)) => {
+                let element = self.downcast::<HTMLButtonElement>().unwrap();
+                Some(element as &Validatable)
+            },
+            NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLObjectElement)) => {
+                let element = self.downcast::<HTMLObjectElement>().unwrap();
+                Some(element as &Validatable)
+            },
+            NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLSelectElement)) => {
+                let element = self.downcast::<HTMLSelectElement>().unwrap();
+                Some(element as &Validatable)
+            },
+            NodeTypeId::Element(ElementTypeId::HTMLElement(HTMLElementTypeId::HTMLTextAreaElement)) => {
+                let element = self.downcast::<HTMLTextAreaElement>().unwrap();
+                Some(element as &Validatable)
+            },
+            _ => {
+                None
+            }
+        };
+        element
     }
 
     pub fn click_in_progress(&self) -> bool {
@@ -1999,7 +2077,7 @@ impl Element {
         self.set_click_in_progress(false);
     }
 
-    pub fn get_state(&self) -> ElementState {
+    pub fn state(&self) -> ElementState {
         self.state.get()
     }
 
@@ -2018,7 +2096,7 @@ impl Element {
         self.state.set(state);
     }
 
-    pub fn get_active_state(&self) -> bool {
+    pub fn active_state(&self) -> bool {
         self.state.get().contains(IN_ACTIVE_STATE)
     }
 
@@ -2026,17 +2104,16 @@ impl Element {
         self.set_state(IN_ACTIVE_STATE, value)
     }
 
-    pub fn get_focus_state(&self) -> bool {
+    pub fn focus_state(&self) -> bool {
         self.state.get().contains(IN_FOCUS_STATE)
     }
 
     pub fn set_focus_state(&self, value: bool) {
         self.set_state(IN_FOCUS_STATE, value);
-        let doc = document_from_node(self);
-        doc.content_changed(self.upcast(), NodeDamage::OtherNodeDamage);
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
     }
 
-    pub fn get_hover_state(&self) -> bool {
+    pub fn hover_state(&self) -> bool {
         self.state.get().contains(IN_HOVER_STATE)
     }
 
@@ -2044,7 +2121,7 @@ impl Element {
         self.set_state(IN_HOVER_STATE, value)
     }
 
-    pub fn get_enabled_state(&self) -> bool {
+    pub fn enabled_state(&self) -> bool {
         self.state.get().contains(IN_ENABLED_STATE)
     }
 
@@ -2052,7 +2129,7 @@ impl Element {
         self.set_state(IN_ENABLED_STATE, value)
     }
 
-    pub fn get_disabled_state(&self) -> bool {
+    pub fn disabled_state(&self) -> bool {
         self.state.get().contains(IN_DISABLED_STATE)
     }
 
@@ -2064,7 +2141,7 @@ impl Element {
 impl Element {
     pub fn check_ancestors_disabled_state_for_form_control(&self) {
         let node = self.upcast::<Node>();
-        if self.get_disabled_state() {
+        if self.disabled_state() {
             return;
         }
         for ancestor in node.ancestors() {
@@ -2073,7 +2150,7 @@ impl Element {
             if !ancestor.is::<HTMLFieldSetElement>() {
                 continue;
             }
-            if !ancestor.downcast::<Element>().unwrap().get_disabled_state() {
+            if !ancestor.downcast::<Element>().unwrap().disabled_state() {
                 continue;
             }
             if ancestor.is_parent_of(node) {
@@ -2098,13 +2175,13 @@ impl Element {
     }
 
     pub fn check_parent_disabled_state_for_option(&self) {
-        if self.get_disabled_state() {
+        if self.disabled_state() {
             return;
         }
         let node = self.upcast::<Node>();
         if let Some(ref parent) = node.GetParentNode() {
             if parent.is::<HTMLOptGroupElement>() &&
-               parent.downcast::<Element>().unwrap().get_disabled_state() {
+               parent.downcast::<Element>().unwrap().disabled_state() {
                 self.set_disabled_state(true);
                 self.set_enabled_state(false);
             }
@@ -2155,4 +2232,3 @@ impl AtomicElementFlags {
         self.0.fetch_or(flags.bits() as usize, Ordering::Relaxed);
     }
 }
-

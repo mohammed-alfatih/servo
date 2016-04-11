@@ -24,14 +24,15 @@ use euclid::{Matrix2D, Matrix4, Point2D, Rect, SideOffsets2D, Size2D};
 use fnv::FnvHasher;
 use gfx_traits::{LayerId, ScrollPolicy};
 use heapsize::HeapSizeOf;
+use ipc_channel::ipc::IpcSharedMemory;
 use msg::constellation_msg::PipelineId;
-use net_traits::image::base::Image;
+use net_traits::image::base::{Image, PixelFormat};
 use paint_context::PaintContext;
 use range::Range;
 use serde::de::{self, Deserialize, Deserializer, MapVisitor, Visitor};
 use serde::ser::impls::MapIteratorVisitor;
 use serde::ser::{Serialize, Serializer};
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{BuildHasherDefault, Hash};
@@ -40,13 +41,13 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use style::computed_values::{border_style, cursor, filter, image_rendering, mix_blend_mode};
 use style::computed_values::{pointer_events};
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style_traits::cursor::Cursor;
 use text::TextRun;
 use text::glyph::CharIndex;
 use util::geometry::{self, MAX_RECT, ScreenPx};
 use util::print_tree::PrintTree;
-use webrender_traits::WebGLContextId;
+use webrender_traits::{self, WebGLContextId};
 
 pub use style::dom::OpaqueNode;
 
@@ -724,8 +725,15 @@ impl fmt::Debug for StackingContext {
             "Pseudo-StackingContext"
         };
 
-        write!(f, "{} at {:?} with overflow {:?}: {:?}",
+        let scrollable_string = if self.scrolls_overflow_area {
+            " (scrolls overflow area)"
+        } else {
+            ""
+        };
+
+        write!(f, "{}{} at {:?} with overflow {:?}: {:?}",
                type_string,
+               scrollable_string,
                self.bounds,
                self.overflow,
                self.id)
@@ -886,6 +894,27 @@ impl ClippingRegion {
     /// Intersects this clipping region with the given rounded rectangle.
     #[inline]
     pub fn intersect_with_rounded_rect(&mut self, rect: &Rect<Au>, radii: &BorderRadii<Au>) {
+        let new_complex_region = ComplexClippingRegion {
+            rect: *rect,
+            radii: *radii,
+        };
+
+        // FIXME(pcwalton): This is O(n²) worst case for disjoint clipping regions. Is that OK?
+        // They're slow anyway…
+        //
+        // Possibly relevant if we want to do better:
+        //
+        //     http://www.inrg.csie.ntu.edu.tw/algorithm2014/presentation/D&C%20Lee-84.pdf
+        for existing_complex_region in &mut self.complex {
+            if existing_complex_region.completely_encloses(&new_complex_region) {
+                *existing_complex_region = new_complex_region;
+                return
+            }
+            if new_complex_region.completely_encloses(existing_complex_region) {
+                return
+            }
+        }
+
         self.complex.push(ComplexClippingRegion {
             rect: *rect,
             radii: *radii,
@@ -907,6 +936,21 @@ impl ClippingRegion {
     }
 }
 
+impl ComplexClippingRegion {
+    // TODO(pcwalton): This could be more aggressive by considering points that touch the inside of
+    // the border radius ellipse.
+    fn completely_encloses(&self, other: &ComplexClippingRegion) -> bool {
+        let left = cmp::max(self.radii.top_left.width, self.radii.bottom_left.width);
+        let top = cmp::max(self.radii.top_left.height, self.radii.top_right.height);
+        let right = cmp::max(self.radii.top_right.width, self.radii.bottom_right.width);
+        let bottom = cmp::max(self.radii.bottom_left.height, self.radii.bottom_right.height);
+        let interior = Rect::new(Point2D::new(self.rect.origin.x + left, self.rect.origin.y + top),
+                                 Size2D::new(self.rect.size.width - left - right,
+                                             self.rect.size.height - top - bottom));
+        interior.origin.x <= other.rect.origin.x && interior.origin.y <= other.rect.origin.y &&
+            interior.max_x() >= other.rect.max_x() && interior.max_y() >= other.rect.max_y()
+    }
+}
 
 /// Metadata attached to each display item. This is useful for performing auxiliary threads with
 /// the display list involving hit testing: finding the originating DOM node and determining the
@@ -926,7 +970,7 @@ impl DisplayItemMetadata {
     /// be `PointerCursor`, but for text display items it may be `TextCursor` or
     /// `VerticalTextCursor`.
     #[inline]
-    pub fn new(node: OpaqueNode, style: &ComputedValues, default_cursor: Cursor)
+    pub fn new(node: OpaqueNode, style: &ServoComputedValues, default_cursor: Cursor)
                -> DisplayItemMetadata {
         DisplayItemMetadata {
             node: node,
@@ -986,8 +1030,11 @@ pub enum TextOrientation {
 #[derive(Clone, HeapSizeOf, Deserialize, Serialize)]
 pub struct ImageDisplayItem {
     pub base: BaseDisplayItem,
+
+    pub webrender_image: WebRenderImageInfo,
+
     #[ignore_heap_size_of = "Because it is non-owning"]
-    pub image: Arc<Image>,
+    pub image_data: Option<Arc<IpcSharedMemory>>,
 
     /// The dimensions to which the image display item should be stretched. If this is smaller than
     /// the bounds of this display item, then the image will be repeated in the appropriate
@@ -1203,10 +1250,14 @@ impl DisplayItem {
 
             DisplayItem::ImageClass(ref image_item) => {
                 debug!("Drawing image at {:?}.", image_item.base.bounds);
-                paint_context.draw_image(&image_item.base.bounds,
-                                         &image_item.stretch_size,
-                                         image_item.image.clone(),
-                                         image_item.image_rendering.clone());
+                paint_context.draw_image(
+                    &image_item.base.bounds,
+                    &image_item.stretch_size,
+                    &image_item.webrender_image,
+                    &image_item.image_data
+                               .as_ref()
+                               .expect("Non-WR painting needs image data!")[..],
+                    image_item.image_rendering.clone());
             }
 
             DisplayItem::WebGLClass(_) => {
@@ -1388,5 +1439,26 @@ impl StackingContextId {
 
     pub fn new_of_type(id: usize, fragment_type: FragmentType) -> StackingContextId {
         StackingContextId(fragment_type, id)
+    }
+}
+
+#[derive(Copy, Clone, HeapSizeOf, Deserialize, Serialize)]
+pub struct WebRenderImageInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: PixelFormat,
+    #[ignore_heap_size_of = "WebRender traits type, and tiny"]
+    pub key: Option<webrender_traits::ImageKey>,
+}
+
+impl WebRenderImageInfo {
+    #[inline]
+    pub fn from_image(image: &Image) -> WebRenderImageInfo {
+        WebRenderImageInfo {
+            width: image.width,
+            height: image.height,
+            format: image.format,
+            key: image.id,
+        }
     }
 }

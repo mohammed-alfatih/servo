@@ -46,11 +46,8 @@ path = "../canvas_traits"
 [dependencies.js]
 git = "https://github.com/servo/rust-mozjs"
 
-[dependencies.offscreen_gl_context]
-git = "https://github.com/ecoal95/rust-offscreen-rendering-context"
-
 [dependencies.angle]
-git = "https://github.com/ecoal95/angle"
+git = "https://github.com/emilio/angle"
 branch = "servo"
 
 [dependencies.ipc-channel]
@@ -62,6 +59,9 @@ features = ["unstable"]
 
 [dependencies.gfx_traits]
 path = "../gfx_traits"
+
+[dependencies.webrender_traits]
+git = "https://github.com/servo/webrender_traits"
 
 [dependencies]
 app_units = {version = "0.2.3", features = ["plugins"]}
@@ -79,9 +79,11 @@ image = "0.7"
 libc = "0.2"
 log = "0.3.5"
 num = "0.1.24"
+offscreen_gl_context = "0.1.2"
 rand = "0.3"
 phf = "0.7.13"
 phf_macros = "0.7.13"
+range = { path = "../range" }
 ref_filter_map = "1.0"
 ref_slice = "0.1.0"
 regex = "0.1.43"
@@ -93,5 +95,5 @@ string_cache = {version = "0.2.11", features = ["heap_size", "unstable"]}
 time = "0.1.12"
 unicase = "1.0"
 url = {version = "0.5.7", features = ["heap_size"]}
-uuid = "0.1.16"
-websocket = "0.15.2"
+uuid = { version = "0.2", features = ["v4"] }
+websocket = "0.16.1"

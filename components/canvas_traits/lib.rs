@@ -8,6 +8,8 @@
 #![feature(plugin)]
 #![plugin(heapsize_plugin, plugins, serde_macros)]
 
+#![deny(unsafe_code)]
+
 extern crate azure;
 extern crate core;
 extern crate cssparser;
@@ -15,7 +17,6 @@ extern crate euclid;
 extern crate gfx_traits;
 extern crate heapsize;
 extern crate ipc_channel;
-extern crate layers;
 extern crate offscreen_gl_context;
 extern crate serde;
 extern crate util;
@@ -33,14 +34,9 @@ use euclid::rect::Rect;
 use euclid::size::Size2D;
 use gfx_traits::color;
 use ipc_channel::ipc::{IpcSender, IpcSharedMemory};
-use layers::platform::surface::NativeSurface;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::default::Default;
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
-
-pub use webrender_traits::{WebGLFramebufferBindingRequest, WebGLError, WebGLParameter, WebGLResult, WebGLContextId};
-pub use webrender_traits::WebGLCommand as CanvasWebGLMsg;
+use webrender_traits::{WebGLCommand, WebGLContextId};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub enum FillRule {
@@ -53,8 +49,7 @@ pub enum CanvasMsg {
     Canvas2d(Canvas2dMsg),
     Common(CanvasCommonMsg),
     FromLayout(FromLayoutMsg),
-    FromPaint(FromPaintMsg),
-    WebGL(CanvasWebGLMsg),
+    WebGL(WebGLCommand),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -78,23 +73,6 @@ pub struct CanvasPixelData {
 #[derive(Clone, Deserialize, Serialize)]
 pub enum FromLayoutMsg {
     SendData(IpcSender<CanvasData>),
-}
-
-#[derive(Clone)]
-pub enum FromPaintMsg {
-    SendNativeSurface(Sender<NativeSurface>),
-}
-
-impl Serialize for FromPaintMsg {
-    fn serialize<S>(&self, _: &mut S) -> Result<(), S::Error> where S: Serializer {
-        panic!("can't serialize a `FromPaintMsg`!")
-    }
-}
-
-impl Deserialize for FromPaintMsg {
-    fn deserialize<D>(_: &mut D) -> Result<FromPaintMsg, D::Error> where D: Deserializer {
-        panic!("can't deserialize a `FromPaintMsg`!")
-    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]

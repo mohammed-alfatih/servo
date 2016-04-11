@@ -30,7 +30,7 @@ use std::{fmt, isize, mem};
 use style::computed_values::{display, overflow_x, position, text_align, text_justify};
 use style::computed_values::{text_overflow, vertical_align, white_space};
 use style::logical_geometry::{LogicalRect, LogicalSize, WritingMode};
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style::values::computed::LengthOrPercentage;
 use text;
 use unicode_bidi;
@@ -354,6 +354,7 @@ impl LineBreaker {
             let need_to_merge = match (&mut result.specific, &candidate.specific) {
                 (&mut SpecificFragmentInfo::ScannedText(ref mut result_info),
                  &SpecificFragmentInfo::ScannedText(ref candidate_info)) => {
+                    result_info.selected() == candidate_info.selected() &&
                     util::arc_ptr_eq(&result_info.run, &candidate_info.run) &&
                         inline_contexts_are_equal(&result.inline_context,
                                                   &candidate.inline_context)
@@ -526,6 +527,9 @@ impl LineBreaker {
                        mut fragment: Fragment,
                        flow: &InlineFlow,
                        layout_context: &LayoutContext) {
+        // Undo any whitespace stripping from previous reflows.
+        fragment.reset_text_range_and_inline_size();
+
         // Determine initial placement for the fragment if we need to.
         //
         // Also, determine whether we can legally break the line before, or inside, this fragment.
@@ -667,7 +671,7 @@ impl LineBreaker {
         let mut need_ellipsis = false;
         let available_inline_size = self.pending_line.green_zone.inline -
             self.pending_line.bounds.size.inline - indentation;
-        match (fragment.style().get_inheritedtext().text_overflow,
+        match (fragment.style().get_text().text_overflow,
                fragment.style().get_box().overflow_x) {
             (text_overflow::T::clip, _) | (_, overflow_x::T::visible) => {}
             (text_overflow::T::ellipsis, _) => {
@@ -1175,7 +1179,7 @@ impl InlineFlow {
     /// `style` is the style of the block.
     pub fn compute_minimum_ascent_and_descent(&self,
                                               font_context: &mut FontContext,
-                                              style: &ComputedValues)
+                                              style: &ServoComputedValues)
                                               -> (Au, Au) {
         // As a special case, if this flow contains only hypothetical fragments, then the entire
         // flow is hypothetical and takes up no space. See CSS 2.1 § 10.3.7.
@@ -1292,7 +1296,7 @@ impl Flow for InlineFlow {
         let _scope = layout_debug_scope!("inline::bubble_inline_sizes {:x}", self.base.debug_id());
 
         let writing_mode = self.base.writing_mode;
-        for kid in self.base.child_iter() {
+        for kid in self.base.child_iter_mut() {
             flow::mut_base(kid).floats = Floats::new(writing_mode);
         }
 
@@ -1394,7 +1398,7 @@ impl Flow for InlineFlow {
         // If there are any inline-block kids, propagate explicit block and inline
         // sizes down to them.
         let block_container_explicit_block_size = self.base.block_container_explicit_block_size;
-        for kid in self.base.child_iter() {
+        for kid in self.base.child_iter_mut() {
             let kid_base = flow::mut_base(kid);
 
             kid_base.block_container_inline_size = inline_size;
@@ -1564,7 +1568,7 @@ impl Flow for InlineFlow {
 
         // Assign block sizes for any inline-block descendants.
         let thread_id = self.base.thread_id;
-        for kid in self.base.child_iter() {
+        for kid in self.base.child_iter_mut() {
             if flow::base(kid).flags.contains(IS_ABSOLUTELY_POSITIONED) ||
                     flow::base(kid).flags.is_float() {
                 continue
@@ -1678,8 +1682,7 @@ impl Flow for InlineFlow {
                 fragment.stacking_relative_content_box(&stacking_relative_border_box);
             let mut clip = self.base.clip.clone();
             fragment.adjust_clipping_region_for_children(&mut clip,
-                                                         &stacking_relative_border_box,
-                                                         false);
+                                                         &stacking_relative_border_box);
             let is_positioned = fragment.is_positioned();
             match fragment.specific {
                 SpecificFragmentInfo::InlineBlock(ref mut info) => {
@@ -1760,7 +1763,7 @@ impl Flow for InlineFlow {
         }
     }
 
-    fn repair_style(&mut self, _: &Arc<ComputedValues>) {}
+    fn repair_style(&mut self, _: &Arc<ServoComputedValues>) {}
 
     fn compute_overflow(&self) -> Overflow {
         let mut overflow = Overflow::new();
@@ -1849,7 +1852,8 @@ impl fmt::Debug for InlineFlow {
 #[derive(Clone)]
 pub struct InlineFragmentNodeInfo {
     pub address: OpaqueNode,
-    pub style: Arc<ComputedValues>,
+    pub style: Arc<ServoComputedValues>,
+    pub selected_style: Arc<ServoComputedValues>,
     pub pseudo: PseudoElementType<()>,
     pub flags: InlineFragmentNodeFlags,
 }
@@ -1869,6 +1873,8 @@ impl fmt::Debug for InlineFragmentNodeInfo {
 
 #[derive(Clone)]
 pub struct InlineFragmentContext {
+    /// The list of nodes that this fragment will be inheriting styles from,
+    /// from the most deeply-nested node out.
     pub nodes: Vec<InlineFragmentNodeInfo>,
 }
 

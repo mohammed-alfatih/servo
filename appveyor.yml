@@ -1,9 +1,15 @@
 version: 1.0.{build}
 
+environment:
+  PATH: 'C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%'
+  MSYSTEM: 'MSYS'
+  MSYS: 'winsymlinks=lnk'
+
 branches:
   only:
     - master
     - auto
+    - try
 
 platform:
   - x64
@@ -13,9 +19,11 @@ cache:
   - .cargo
 
 install:
-  - set MSYSTEM=MSYS
-  - set MSYS="winsymlinks=lnk"
-  - PATH C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%
+    # Check if commit in auto branch exists in master, if exists build will be canceled.
+  - cmd: >-
+      for /f %%i in ('git branch -r origin/master --contain %APPVEYOR_REPO_COMMIT%') do set git_status=%%i
+
+      IF %APPVEYOR_REPO_BRANCH%==auto (IF [%git_status%]==[origin/master] EXIT -1)
   - bash -lc "echo $MSYSTEM; pacman --needed --noconfirm -Sy pacman-mirrors"
   - bash -lc "pacman --noconfirm -Sy"
   - bash -lc "pacman -Sy --needed --noconfirm git mingw-w64-x86_64-toolchain mingw-w64-x86_64-freetype mingw-w64-x86_64-icu mingw-w64-x86_64-nspr mingw-w64-x86_64-ca-certificates mingw-w64-x86_64-expat mingw-w64-x86_64-cmake tar diffutils patch patchutils make python2-setuptools"
@@ -23,12 +31,17 @@ install:
   - bash -lc "mv /mingw64/bin/python2.exe /mingw64/bin/python2-mingw64.exe"
   - bash -lc "mv /mingw64/bin/python2.7.exe /mingw64/bin/python2.7-mingw64.exe"
 
+# Uncomment these lines to expose RDP access information to the build machine in the build log.
+#init:
+#  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+#
+#on_finish:
+#  - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+
 build_script:
   - cmd: >-
       set MSYSTEM=MINGW64
 
-      PATH C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%
-
-      bash -lc "cd $APPVEYOR_BUILD_FOLDER; ./mach build -d -v"
+      bash -lc "cd $APPVEYOR_BUILD_FOLDER; ./mach build -d -v && ./mach test-unit"
 
 test: off

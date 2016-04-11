@@ -20,6 +20,7 @@ use script::layout_interface::{ContentBoxResponse, ContentBoxesResponse, NodeGeo
 use script::layout_interface::{HitTestResponse, LayoutRPC, OffsetParentResponse};
 use script::layout_interface::{ResolvedStyleResponse, ScriptLayoutChan, MarginStyleResponse};
 use script_traits::LayoutMsg as ConstellationMsg;
+use script_traits::UntrustedNodeAddress;
 use sequential;
 use std::cmp::{min, max};
 use std::ops::Deref;
@@ -27,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use string_cache::Atom;
 use style::computed_values;
 use style::logical_geometry::{WritingMode, BlockFlowDirection, InlineBaseDirection};
+use style::properties::ComputedValues;
 use style::properties::longhands::{display, position};
 use style::properties::style_structs;
 use style::selector_impl::PseudoElement;
@@ -82,6 +84,24 @@ impl LayoutRPC for LayoutRPCImpl {
         HitTestResponse {
             node_address: result.map(|dim| dim.node.to_untrusted_node_address()),
         }
+    }
+
+    fn nodes_from_point(&self, point: Point2D<f32>) -> Vec<UntrustedNodeAddress> {
+        let point = Point2D::new(Au::from_f32_px(point.x), Au::from_f32_px(point.y));
+        let nodes_from_point_list = {
+            let &LayoutRPCImpl(ref rw_data) = self;
+            let rw_data = rw_data.lock().unwrap();
+            let result = match rw_data.display_list {
+                None => panic!("Tried to hit test without a DisplayList"),
+                Some(ref display_list) => display_list.hit_test(point),
+            };
+
+            result
+        };
+
+        nodes_from_point_list.iter()
+           .map(|metadata| metadata.node.to_untrusted_node_address())
+           .collect()
     }
 
     fn node_geometry(&self) -> NodeGeometryResponse {
@@ -368,7 +388,7 @@ impl ParentOffsetBorderBoxIterator {
 
 impl FragmentBorderBoxIterator for FragmentLocatingFragmentIterator {
     fn process(&mut self, fragment: &Fragment, _: i32, border_box: &Rect<Au>) {
-        let style_structs::Border {
+        let style_structs::ServoBorder {
             border_top_width: top_width,
             border_right_width: right_width,
             border_bottom_width: bottom_width,
@@ -394,7 +414,7 @@ impl FragmentBorderBoxIterator for UnioningFragmentScrollAreaIterator {
         // increase in size. To work around this, we store the original elements padding
         // rectangle as `origin_rect` and the union of all child elements padding and
         // margin rectangles as `union_rect`.
-        let style_structs::Border {
+        let style_structs::ServoBorder {
             border_top_width: top_border,
             border_right_width: right_border,
             border_bottom_width: bottom_border,
@@ -422,7 +442,7 @@ impl FragmentBorderBoxIterator for UnioningFragmentScrollAreaIterator {
                 self.level = Some(level);
                 self.is_child = true;
                 self.overflow_direction = overflow_direction(&fragment.style.writing_mode);
-                self.origin_rect = Rect::new(Point2D::new(top_padding, left_padding),
+                self.origin_rect = Rect::new(Point2D::new(left_padding, top_padding),
                                              Size2D::new(right_padding, bottom_padding));
             },
         };
@@ -533,9 +553,12 @@ pub fn process_resolved_style_request<N: LayoutNode>(
             requested_node: N, pseudo: &Option<PseudoElement>,
             property: &Atom, layout_root: &mut FlowRef) -> Option<String> {
     let layout_node = requested_node.to_threadsafe();
-    let layout_node = match pseudo {
-        &Some(PseudoElement::Before) => layout_node.get_before_pseudo(),
-        &Some(PseudoElement::After) => layout_node.get_after_pseudo(),
+    let layout_node = match *pseudo {
+        Some(PseudoElement::Before) => layout_node.get_before_pseudo(),
+        Some(PseudoElement::After) => layout_node.get_after_pseudo(),
+        Some(PseudoElement::DetailsSummary) => layout_node.get_details_summary_pseudo(),
+        Some(PseudoElement::DetailsContent) => layout_node.get_details_content_pseudo(),
+        Some(PseudoElement::Selection) => None,
         _ => Some(layout_node)
     };
 

@@ -9,31 +9,32 @@ use dom::bindings::codegen::Bindings::DedicatedWorkerGlobalScopeBinding;
 use dom::bindings::codegen::Bindings::DedicatedWorkerGlobalScopeBinding::DedicatedWorkerGlobalScopeMethods;
 use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::error::ErrorResult;
-use dom::bindings::global::GlobalRef;
+use dom::bindings::global::{GlobalRef, global_root_from_context};
 use dom::bindings::inheritance::Castable;
 use dom::bindings::js::{Root, RootCollection};
 use dom::bindings::refcounted::LiveDOMReferences;
 use dom::bindings::reflector::Reflectable;
 use dom::bindings::structuredclone::StructuredCloneData;
+use dom::bindings::trace::JSTraceable;
 use dom::messageevent::MessageEvent;
-use dom::worker::{SimpleWorkerErrorHandler, TrustedWorkerAddress, WorkerMessageHandler};
+use dom::worker::{SimpleWorkerErrorHandler, SharedRt, TrustedWorkerAddress, WorkerMessageHandler};
 use dom::workerglobalscope::WorkerGlobalScope;
 use dom::workerglobalscope::WorkerGlobalScopeInit;
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 use ipc_channel::router::ROUTER;
-use js::jsapi::{HandleValue, JSContext, RootedValue};
-use js::jsapi::{JSAutoCompartment, JSAutoRequest};
+use js::jsapi::{HandleValue, JS_SetInterruptCallback};
+use js::jsapi::{JSAutoCompartment, JSAutoRequest, JSContext, RootedValue};
 use js::jsval::UndefinedValue;
 use js::rust::Runtime;
 use msg::constellation_msg::PipelineId;
 use net_traits::{LoadContext, load_whole_resource};
 use rand::random;
-use script_thread::ScriptThreadEventCategory::WorkerEvent;
-use script_thread::{ScriptThread, ScriptChan, ScriptPort, StackRootTLS, CommonScriptMsg};
+use script_runtime::ScriptThreadEventCategory::WorkerEvent;
+use script_runtime::{CommonScriptMsg, ScriptChan, ScriptPort, StackRootTLS, get_reports, new_rt_and_cx};
 use script_traits::{TimerEvent, TimerSource};
 use std::mem::replace;
-use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvError, Select, Sender, channel};
+use std::sync::{Arc, Mutex};
 use url::Url;
 use util::str::DOMString;
 use util::thread::spawn_named;
@@ -95,10 +96,11 @@ impl ScriptChan for WorkerThreadWorkerChan {
 }
 
 impl ScriptPort for Receiver<(TrustedWorkerAddress, WorkerScriptMsg)> {
-    fn recv(&self) -> CommonScriptMsg {
-        match self.recv().unwrap().1 {
-            WorkerScriptMsg::Common(script_msg) => script_msg,
-            WorkerScriptMsg::DOMMessage(_) => panic!("unexpected worker event message!"),
+    fn recv(&self) -> Result<CommonScriptMsg, ()> {
+        match self.recv().map(|(_, msg)| msg) {
+            Ok(WorkerScriptMsg::Common(script_msg)) => Ok(script_msg),
+            Ok(WorkerScriptMsg::DOMMessage(_)) => panic!("unexpected worker event message!"),
+            Err(_) => Err(()),
         }
     }
 }
@@ -158,7 +160,7 @@ impl DedicatedWorkerGlobalScope {
                      worker_url: Url,
                      id: PipelineId,
                      from_devtools_receiver: Receiver<DevtoolScriptControlMsg>,
-                     runtime: Rc<Runtime>,
+                     runtime: Runtime,
                      parent_sender: Box<ScriptChan + Send>,
                      own_sender: Sender<(TrustedWorkerAddress, WorkerScriptMsg)>,
                      receiver: Receiver<(TrustedWorkerAddress, WorkerScriptMsg)>,
@@ -185,30 +187,33 @@ impl DedicatedWorkerGlobalScope {
                worker_url: Url,
                id: PipelineId,
                from_devtools_receiver: Receiver<DevtoolScriptControlMsg>,
-               runtime: Rc<Runtime>,
+               runtime: Runtime,
                parent_sender: Box<ScriptChan + Send>,
                own_sender: Sender<(TrustedWorkerAddress, WorkerScriptMsg)>,
                receiver: Receiver<(TrustedWorkerAddress, WorkerScriptMsg)>,
                timer_event_chan: IpcSender<TimerEvent>,
                timer_event_port: Receiver<(TrustedWorkerAddress, TimerEvent)>)
                -> Root<DedicatedWorkerGlobalScope> {
+        let cx = runtime.cx();
         let scope = box DedicatedWorkerGlobalScope::new_inherited(init,
                                                                   worker_url,
                                                                   id,
                                                                   from_devtools_receiver,
-                                                                  runtime.clone(),
+                                                                  runtime,
                                                                   parent_sender,
                                                                   own_sender,
                                                                   receiver,
                                                                   timer_event_chan,
                                                                   timer_event_port);
-        DedicatedWorkerGlobalScopeBinding::Wrap(runtime.cx(), scope)
+        DedicatedWorkerGlobalScopeBinding::Wrap(cx, scope)
     }
 
+    #[allow(unsafe_code)]
     pub fn run_worker_scope(init: WorkerGlobalScopeInit,
                             worker_url: Url,
                             id: PipelineId,
                             from_devtools_receiver: IpcReceiver<DevtoolScriptControlMsg>,
+                            main_thread_rt: Arc<Mutex<Option<SharedRt>>>,
                             worker: TrustedWorkerAddress,
                             parent_sender: Box<ScriptChan + Send>,
                             own_sender: Sender<(TrustedWorkerAddress, WorkerScriptMsg)>,
@@ -235,7 +240,8 @@ impl DedicatedWorkerGlobalScope {
                 }
             };
 
-            let runtime = Rc::new(ScriptThread::new_rt_and_cx());
+            let runtime = new_rt_and_cx();
+            *main_thread_rt.lock().unwrap() = Some(SharedRt::new(&runtime));
 
             let (devtools_mpsc_chan, devtools_mpsc_port) = channel();
             ROUTER.route_ipc_receiver_to_mpsc_sender(from_devtools_receiver, devtools_mpsc_chan);
@@ -249,12 +255,21 @@ impl DedicatedWorkerGlobalScope {
             });
 
             let global = DedicatedWorkerGlobalScope::new(
-                init, url, id, devtools_mpsc_port, runtime.clone(),
+                init, url, id, devtools_mpsc_port, runtime,
                 parent_sender.clone(), own_sender, receiver,
                 timer_ipc_chan, timer_rx);
             // FIXME(njn): workers currently don't have a unique ID suitable for using in reporter
             // registration (#6631), so we instead use a random number and cross our fingers.
             let scope = global.upcast::<WorkerGlobalScope>();
+
+            unsafe {
+                // Handle interrupt requests
+                JS_SetInterruptCallback(scope.runtime(), Some(interrupt_callback));
+            }
+
+            if scope.is_closing() {
+                return;
+            }
 
             {
                 let _ar = AutoWorkerReset::new(global.r(), worker);
@@ -264,6 +279,9 @@ impl DedicatedWorkerGlobalScope {
             let reporter_name = format!("worker-reporter-{}", random::<u64>());
             scope.mem_profiler_chan().run_with_memory_reporting(|| {
                 while let Ok(event) = global.receive_event() {
+                    if scope.is_closing() {
+                        break;
+                    }
                     global.handle_event(event);
                 }
             }, reporter_name, parent_sender, CommonScriptMsg::CollectReports);
@@ -346,7 +364,7 @@ impl DedicatedWorkerGlobalScope {
                 let scope = self.upcast::<WorkerGlobalScope>();
                 let cx = scope.get_cx();
                 let path_seg = format!("url({})", scope.get_url());
-                let reports = ScriptThread::get_reports(cx, path_seg);
+                let reports = get_reports(cx, path_seg);
                 reports_chan.send(reports);
             },
         }
@@ -384,6 +402,19 @@ impl DedicatedWorkerGlobalScope {
             },
         }
     }
+}
+
+#[allow(unsafe_code)]
+unsafe extern "C" fn interrupt_callback(cx: *mut JSContext) -> bool {
+    let global = global_root_from_context(cx);
+    let worker = match global.r() {
+        GlobalRef::Worker(w) => w,
+        _ => panic!("global for worker is not a worker scope")
+    };
+    assert!(worker.is::<DedicatedWorkerGlobalScope>());
+
+    // A false response causes the script to terminate
+    !worker.is_closing()
 }
 
 impl DedicatedWorkerGlobalScopeMethods for DedicatedWorkerGlobalScope {

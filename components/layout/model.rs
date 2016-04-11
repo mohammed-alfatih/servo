@@ -13,7 +13,7 @@ use std::cmp::{max, min};
 use std::fmt;
 use style::computed_values::transform::ComputedMatrix;
 use style::logical_geometry::LogicalMargin;
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style::values::computed::{BorderRadiusSize, LengthOrPercentageOrAuto};
 use style::values::computed::{LengthOrPercentage, LengthOrPercentageOrNone};
 
@@ -114,8 +114,8 @@ impl MarginCollapseInfo {
     }
 
     pub fn initialize_block_start_margin(&mut self,
-                                 fragment: &Fragment,
-                                 can_collapse_block_start_margin_with_kids: bool) {
+                                         fragment: &Fragment,
+                                         can_collapse_block_start_margin_with_kids: bool) {
         if !can_collapse_block_start_margin_with_kids {
             self.state = MarginCollapseState::AccumulatingMarginIn
         }
@@ -239,25 +239,31 @@ impl MarginCollapseInfo {
     /// Adds the child's potentially collapsible block-end margin to the current margin state and
     /// advances the Y offset by the appropriate amount to handle that margin. Returns the amount
     /// that should be added to the Y offset during block layout.
-    pub fn advance_block_end_margin(&mut self, child_collapsible_margins: &CollapsibleMargins) -> Au {
+    pub fn advance_block_end_margin(&mut self, child_collapsible_margins: &CollapsibleMargins)
+                                    -> Au {
         match (self.state, *child_collapsible_margins) {
             (MarginCollapseState::AccumulatingCollapsibleTopMargin, CollapsibleMargins::None(..)) |
-            (MarginCollapseState::AccumulatingCollapsibleTopMargin, CollapsibleMargins::Collapse(..)) => {
+            (MarginCollapseState::AccumulatingCollapsibleTopMargin,
+             CollapsibleMargins::Collapse(..)) => {
                 // Can't happen because the state will have been replaced with
                 // `MarginCollapseState::AccumulatingMarginIn` above.
                 panic!("should not be accumulating collapsible block_start margins anymore!")
             }
-            (MarginCollapseState::AccumulatingCollapsibleTopMargin, CollapsibleMargins::CollapseThrough(margin)) => {
+            (MarginCollapseState::AccumulatingCollapsibleTopMargin,
+             CollapsibleMargins::CollapseThrough(margin)) => {
                 self.block_start_margin.union(margin);
                 Au(0)
             }
-            (MarginCollapseState::AccumulatingMarginIn, CollapsibleMargins::None(_, block_end)) => {
+            (MarginCollapseState::AccumulatingMarginIn,
+             CollapsibleMargins::None(_, block_end)) => {
                 assert_eq!(self.margin_in.most_positive, Au(0));
                 assert_eq!(self.margin_in.most_negative, Au(0));
                 block_end
             }
-            (MarginCollapseState::AccumulatingMarginIn, CollapsibleMargins::Collapse(_, block_end)) |
-            (MarginCollapseState::AccumulatingMarginIn, CollapsibleMargins::CollapseThrough(block_end)) => {
+            (MarginCollapseState::AccumulatingMarginIn,
+             CollapsibleMargins::Collapse(_, block_end)) |
+            (MarginCollapseState::AccumulatingMarginIn,
+             CollapsibleMargins::CollapseThrough(block_end)) => {
                 self.margin_in.union(block_end);
                 Au(0)
             }
@@ -434,7 +440,7 @@ pub fn specified_border_radius(radius: BorderRadiusSize, containing_length: Au) 
 }
 
 #[inline]
-pub fn padding_from_style(style: &ComputedValues, containing_block_inline_size: Au)
+pub fn padding_from_style(style: &ServoComputedValues, containing_block_inline_size: Au)
                           -> LogicalMargin<Au> {
     let padding_style = style.get_padding();
     LogicalMargin::from_physical(style.writing_mode, SideOffsets2D::new(
@@ -449,7 +455,7 @@ pub fn padding_from_style(style: &ComputedValues, containing_block_inline_size: 
 ///
 /// This is used when calculating intrinsic inline sizes.
 #[inline]
-pub fn specified_margin_from_style(style: &ComputedValues) -> LogicalMargin<Au> {
+pub fn specified_margin_from_style(style: &ServoComputedValues) -> LogicalMargin<Au> {
     let margin_style = style.get_margin();
     LogicalMargin::from_physical(style.writing_mode, SideOffsets2D::new(
         MaybeAuto::from_style(margin_style.margin_top, Au(0)).specified_or_zero(),
@@ -469,6 +475,70 @@ impl ToGfxMatrix for ComputedMatrix {
             m21: self.m21 as f32, m22: self.m22 as f32, m23: self.m23 as f32, m24: self.m24 as f32,
             m31: self.m31 as f32, m32: self.m32 as f32, m33: self.m33 as f32, m34: self.m34 as f32,
             m41: self.m41 as f32, m42: self.m42 as f32, m43: self.m43 as f32, m44: self.m44 as f32
+        }
+    }
+}
+
+// https://drafts.csswg.org/css2/visudet.html#min-max-widths
+// https://drafts.csswg.org/css2/visudet.html#min-max-heights
+/// A min or max constraint
+///
+/// A `max` of `None` is equivalent to no limmit for the size in the given
+/// dimension. The `min` is >= 0, as negative values are illegal and by
+/// default `min` is 0.
+#[derive(Debug)]
+pub struct MinMaxConstraint {
+    min: Au,
+    max: Option<Au>
+}
+
+impl MinMaxConstraint {
+    /// Create a `MinMaxConstraint` for a dimension given the min, max, and content box size for
+    /// an axis
+    pub fn new(content_size: Option<Au>, min: LengthOrPercentage,
+               max: LengthOrPercentageOrNone) -> MinMaxConstraint {
+        let min = match min {
+            LengthOrPercentage::Length(length) => length,
+            LengthOrPercentage::Percentage(percent) => {
+                match content_size {
+                    Some(size) => size.scale_by(percent),
+                    None => Au(0),
+                }
+            },
+            LengthOrPercentage::Calc(calc) => {
+                match content_size {
+                    Some(size) => size.scale_by(calc.percentage()),
+                    None => Au(0),
+                }
+            }
+        };
+
+        let max = match max {
+            LengthOrPercentageOrNone::Length(length) => Some(length),
+            LengthOrPercentageOrNone::Percentage(percent) => {
+                content_size.map(|size| size.scale_by(percent))
+            },
+            LengthOrPercentageOrNone::Calc(calc) => {
+                content_size.map(|size| size.scale_by(calc.percentage()))
+            }
+            LengthOrPercentageOrNone::None => None,
+        };
+
+        MinMaxConstraint {
+            min: min,
+            max: max
+        }
+    }
+
+    /// Clamp the given size by the given `min` and `max` constraints.
+    pub fn clamp(&self, other: Au) -> Au {
+        if other < self.min {
+            self.min
+        } else {
+            match self.max {
+                Some(max) if max < other => max,
+                _ => other
+            }
         }
     }
 }

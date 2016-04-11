@@ -9,6 +9,7 @@
 #![feature(custom_derive, plugin)]
 #![plugin(heapsize_plugin, plugins, serde_macros)]
 #![deny(missing_docs)]
+#![deny(unsafe_code)]
 
 extern crate app_units;
 extern crate canvas_traits;
@@ -59,6 +60,7 @@ pub use script_msg::{LayoutMsg, ScriptMsg};
 /// `from_untrusted_node_address` before they can be used, because we do not trust layout.
 #[derive(Copy, Clone, Debug)]
 pub struct UntrustedNodeAddress(pub *const c_void);
+#[allow(unsafe_code)]
 unsafe impl Send for UntrustedNodeAddress {}
 
 /// Messages sent to the layout thread from the constellation and/or compositor.
@@ -225,8 +227,21 @@ pub enum CompositorEvent {
     MouseMoveEvent(Option<Point2D<f32>>),
     /// A touch event was generated with a touch ID and location.
     TouchEvent(TouchEventType, TouchId, Point2D<f32>),
+    /// Touchpad pressure event
+    TouchpadPressureEvent(Point2D<f32>, f32, TouchpadPressurePhase),
     /// A key was pressed.
     KeyEvent(Key, KeyState, KeyModifiers),
+}
+
+/// Touchpad pressure phase for TouchpadPressureEvent.
+#[derive(Copy, Clone, HeapSizeOf, PartialEq, Deserialize, Serialize)]
+pub enum TouchpadPressurePhase {
+    /// Pressure before a regular click.
+    BeforeClick,
+    /// Pressure after a regular click.
+    AfterFirstClick,
+    /// Pressure after a "forceTouch" click
+    AfterSecondClick,
 }
 
 /// An opaque wrapper around script<->layout channels to avoid leaking message types into
@@ -363,6 +378,8 @@ pub enum ScriptToCompositorMsg {
     TouchEventProcessed(EventResult),
     /// Requests that the compositor shut down.
     Exit,
+    /// Allow the compositor to free script-specific resources.
+    Exited,
 }
 
 /// Whether a DOM event was prevented by web content
@@ -398,6 +415,8 @@ pub struct IFrameLoadInfo {
     pub new_pipeline_id: PipelineId,
     /// Sandbox type of this iframe
     pub sandbox: IFrameSandboxState,
+    ///  Whether this iframe should be considered private
+    pub is_private: bool,
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Using_the_Browser_API#Events
@@ -422,7 +441,7 @@ pub enum MozBrowserEvent {
     /// Sent when the browser `<iframe>` starts to load a new page.
     LoadStart,
     /// Sent when a browser `<iframe>`'s location changes.
-    LocationChange(String),
+    LocationChange(String, bool, bool),
     /// Sent when window.open() is called within a browser `<iframe>`.
     OpenWindow,
     /// Sent when the SSL state changes within a browser `<iframe>`.
@@ -449,7 +468,7 @@ impl MozBrowserEvent {
             MozBrowserEvent::IconChange(_, _, _) => "mozbrowsericonchange",
             MozBrowserEvent::LoadEnd => "mozbrowserloadend",
             MozBrowserEvent::LoadStart => "mozbrowserloadstart",
-            MozBrowserEvent::LocationChange(_) => "mozbrowserlocationchange",
+            MozBrowserEvent::LocationChange(_, _, _) => "mozbrowserlocationchange",
             MozBrowserEvent::OpenWindow => "mozbrowseropenwindow",
             MozBrowserEvent::SecurityChange(_) => "mozbrowsersecuritychange",
             MozBrowserEvent::ShowModalPrompt(_, _, _, _) => "mozbrowsershowmodalprompt",

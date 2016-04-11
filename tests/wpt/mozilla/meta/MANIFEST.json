@@ -3,16 +3,7 @@
     "manual": [],
     "reftest": [],
     "stub": [],
-    "testharness": [
-      {
-        "path": "mozilla/prototypes.html",
-        "url": "/_mozilla/mozilla/prototypes.html"
-      },
-      {
-        "path": "mozilla/weakref.html",
-        "url": "/_mozilla/mozilla/weakref.html"
-      }
-    ],
+    "testharness": [],
     "wdspec": []
   },
   "local_changes": {
@@ -564,6 +555,18 @@
             "url": "/_mozilla/css/block_formatting_context_containing_floats_a.html"
           }
         ],
+        "css/block_formatting_context_float_inorder_interaction_a.html": [
+          {
+            "path": "css/block_formatting_context_float_inorder_interaction_a.html",
+            "references": [
+              [
+                "/_mozilla/css/block_formatting_context_float_inorder_interaction_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/block_formatting_context_float_inorder_interaction_a.html"
+          }
+        ],
         "css/block_formatting_context_float_placement_a.html": [
           {
             "path": "css/block_formatting_context_float_placement_a.html",
@@ -822,6 +825,18 @@
               ]
             ],
             "url": "/_mozilla/css/border_radius_elliptical_a.html"
+          }
+        ],
+        "css/border_radius_in_border_radius_a.html": [
+          {
+            "path": "css/border_radius_in_border_radius_a.html",
+            "references": [
+              [
+                "/_mozilla/css/border_radius_in_border_radius_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/border_radius_in_border_radius_a.html"
           }
         ],
         "css/border_radius_overlapping_a.html": [
@@ -1472,6 +1487,18 @@
             "url": "/_mozilla/css/float_right_intrinsic_width_a.html"
           }
         ],
+        "css/float_speculation_negative_inline_margins_a.html": [
+          {
+            "path": "css/float_speculation_negative_inline_margins_a.html",
+            "references": [
+              [
+                "/_mozilla/css/float_speculation_negative_inline_margins_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/float_speculation_negative_inline_margins_a.html"
+          }
+        ],
         "css/float_table_a.html": [
           {
             "path": "css/float_table_a.html",
@@ -1892,6 +1919,18 @@
             "url": "/_mozilla/css/iframe/stacking_context_position_a.html"
           }
         ],
+        "css/image_percentage_dimen.html": [
+          {
+            "path": "css/image_percentage_dimen.html",
+            "references": [
+              [
+                "/_mozilla/css/image_percentage_dimen_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/image_percentage_dimen.html"
+          }
+        ],
         "css/image_rendering_auto_a.html": [
           {
             "path": "css/image_rendering_auto_a.html",
@@ -2070,6 +2109,54 @@
               ]
             ],
             "url": "/_mozilla/css/incremental_text_color_a.html"
+          }
+        ],
+        "css/incremental_trailing_whitespace_a.html": [
+          {
+            "path": "css/incremental_trailing_whitespace_a.html",
+            "references": [
+              [
+                "/_mozilla/css/incremental_trailing_whitespace_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/incremental_trailing_whitespace_a.html"
+          }
+        ],
+        "css/incremental_trailing_whitespace_ref.html": [
+          {
+            "path": "css/incremental_trailing_whitespace_ref.html",
+            "references": [
+              [
+                "/_mozilla/css/incremental_trailing_whitespace_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/incremental_trailing_whitespace_ref.html"
+          }
+        ],
+        "css/incremental_visibility_a.html": [
+          {
+            "path": "css/incremental_visibility_a.html",
+            "references": [
+              [
+                "/_mozilla/css/incremental_visibility_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/incremental_visibility_a.html"
+          }
+        ],
+        "css/incremental_visibility_ref.html": [
+          {
+            "path": "css/incremental_visibility_ref.html",
+            "references": [
+              [
+                "/_mozilla/css/incremental_visibility_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/incremental_visibility_ref.html"
           }
         ],
         "css/inline_absolute_hypothetical_clip_a.html": [
@@ -2444,6 +2531,18 @@
             "url": "/_mozilla/css/inline_whitespace_b.html"
           }
         ],
+        "css/input_alignment_a.html": [
+          {
+            "path": "css/input_alignment_a.html",
+            "references": [
+              [
+                "/_mozilla/css/input_alignment_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/input_alignment_a.html"
+          }
+        ],
         "css/input_button_margins_a.html": [
           {
             "path": "css/input_button_margins_a.html",
@@ -2480,6 +2579,18 @@
             "url": "/_mozilla/css/input_height_a.html"
           }
         ],
+        "css/input_insertion_point_empty_a.html": [
+          {
+            "path": "css/input_insertion_point_empty_a.html",
+            "references": [
+              [
+                "/_mozilla/css/input_insertion_point_empty_ref.html",
+                "!="
+              ]
+            ],
+            "url": "/_mozilla/css/input_insertion_point_empty_a.html"
+          }
+        ],
         "css/input_placeholder.html": [
           {
             "path": "css/input_placeholder.html",
@@ -2502,6 +2613,42 @@
               ]
             ],
             "url": "/_mozilla/css/input_placeholder_ref.html"
+          }
+        ],
+        "css/input_selection_a.html": [
+          {
+            "path": "css/input_selection_a.html",
+            "references": [
+              [
+                "/_mozilla/css/input_selection_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/input_selection_a.html"
+          }
+        ],
+        "css/input_selection_incremental_a.html": [
+          {
+            "path": "css/input_selection_incremental_a.html",
+            "references": [
+              [
+                "/_mozilla/css/input_selection_incremental_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/input_selection_incremental_a.html"
+          }
+        ],
+        "css/input_selection_ref.html": [
+          {
+            "path": "css/input_selection_ref.html",
+            "references": [
+              [
+                "/_mozilla/css/input_selection_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/input_selection_ref.html"
           }
         ],
         "css/input_whitespace.html": [
@@ -3162,6 +3309,18 @@
               ]
             ],
             "url": "/_mozilla/css/no_image_background_a.html"
+          }
+        ],
+        "css/non-inline-block-resets-underline-property.html": [
+          {
+            "path": "css/non-inline-block-resets-underline-property.html",
+            "references": [
+              [
+                "/_mozilla/css/non-inline-block-resets-underline-property-ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/non-inline-block-resets-underline-property.html"
           }
         ],
         "css/noscript.html": [
@@ -5188,6 +5347,18 @@
             "url": "/_mozilla/css/white_space_intrinsic_sizes_a.html"
           }
         ],
+        "css/whitespace_no_affect_border.html": [
+          {
+            "path": "css/whitespace_no_affect_border.html",
+            "references": [
+              [
+                "/_mozilla/css/whitespace_no_affect_border_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/css/whitespace_no_affect_border.html"
+          }
+        ],
         "css/whitespace_nowrap_a.html": [
           {
             "path": "css/whitespace_nowrap_a.html",
@@ -5416,6 +5587,30 @@
             "url": "/_mozilla/mozilla/canvas/drawimage_html_image_9.html"
           }
         ],
+        "mozilla/details_ui_closed.html": [
+          {
+            "path": "mozilla/details_ui_closed.html",
+            "references": [
+              [
+                "/_mozilla/mozilla/details_ui_closed_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/mozilla/details_ui_closed.html"
+          }
+        ],
+        "mozilla/details_ui_opened.html": [
+          {
+            "path": "mozilla/details_ui_opened.html",
+            "references": [
+              [
+                "/_mozilla/mozilla/details_ui_opened_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/mozilla/details_ui_opened.html"
+          }
+        ],
         "mozilla/iframe/resize_after_load.html": [
           {
             "path": "mozilla/iframe/resize_after_load.html",
@@ -5488,6 +5683,18 @@
             "url": "/_mozilla/mozilla/webgl/tex_image_2d_canvas_no_context.html"
           }
         ],
+        "mozilla/webgl/tex_image_2d_mipmap.html": [
+          {
+            "path": "mozilla/webgl/tex_image_2d_mipmap.html",
+            "references": [
+              [
+                "/_mozilla/mozilla/webgl/tex_image_2d_simple_ref.html",
+                "=="
+              ]
+            ],
+            "url": "/_mozilla/mozilla/webgl/tex_image_2d_mipmap.html"
+          }
+        ],
         "mozilla/webgl/tex_image_2d_simple.html": [
           {
             "path": "mozilla/webgl/tex_image_2d_simple.html",
@@ -5506,6 +5713,12 @@
           {
             "path": "css/float_relative_to_position.html",
             "url": "/_mozilla/css/float_relative_to_position.html"
+          }
+        ],
+        "css/meta_viewport_resize.html": [
+          {
+            "path": "css/meta_viewport_resize.html",
+            "url": "/_mozilla/css/meta_viewport_resize.html"
           }
         ],
         "css/test_variable_legal_values.html": [
@@ -5904,6 +6117,12 @@
             "url": "/_mozilla/mozilla/htmlfontelement_size_attribute.html"
           }
         ],
+        "mozilla/htmllabel-activation.html": [
+          {
+            "path": "mozilla/htmllabel-activation.html",
+            "url": "/_mozilla/mozilla/htmllabel-activation.html"
+          }
+        ],
         "mozilla/htmlspacechars.html": [
           {
             "path": "mozilla/htmlspacechars.html",
@@ -5976,6 +6195,12 @@
             "url": "/_mozilla/mozilla/mime_sniffing_font_context.html"
           }
         ],
+        "mozilla/mozbrowser/crossorigin_xhr.html": [
+          {
+            "path": "mozilla/mozbrowser/crossorigin_xhr.html",
+            "url": "/_mozilla/mozilla/mozbrowser/crossorigin_xhr.html"
+          }
+        ],
         "mozilla/mozbrowser/iframe_goback.html": [
           {
             "path": "mozilla/mozbrowser/iframe_goback.html",
@@ -5998,6 +6223,12 @@
           {
             "path": "mozilla/mozbrowser/mozbrowsericonchange_event.html",
             "url": "/_mozilla/mozilla/mozbrowser/mozbrowsericonchange_event.html"
+          }
+        ],
+        "mozilla/mozbrowser/mozbrowserlocationchange_event.html": [
+          {
+            "path": "mozilla/mozbrowser/mozbrowserlocationchange_event.html",
+            "url": "/_mozilla/mozilla/mozbrowser/mozbrowserlocationchange_event.html"
           }
         ],
         "mozilla/mozbrowser/mozbrowsersecuritychange_event.html": [
@@ -6090,10 +6321,22 @@
             "url": "/_mozilla/mozilla/parentnodes.html"
           }
         ],
+        "mozilla/preferences.html": [
+          {
+            "path": "mozilla/preferences.html",
+            "url": "/_mozilla/mozilla/preferences.html"
+          }
+        ],
         "mozilla/preserve_wrapper_callback.html": [
           {
             "path": "mozilla/preserve_wrapper_callback.html",
             "url": "/_mozilla/mozilla/preserve_wrapper_callback.html"
+          }
+        ],
+        "mozilla/prototypes.html": [
+          {
+            "path": "mozilla/prototypes.html",
+            "url": "/_mozilla/mozilla/prototypes.html"
           }
         ],
         "mozilla/proxy_setter.html": [
@@ -6184,6 +6427,12 @@
           {
             "path": "mozilla/variadic-interface.html",
             "url": "/_mozilla/mozilla/variadic-interface.html"
+          }
+        ],
+        "mozilla/weakref.html": [
+          {
+            "path": "mozilla/weakref.html",
+            "url": "/_mozilla/mozilla/weakref.html"
           }
         ],
         "mozilla/webgl/bufferData.html": [
@@ -6800,6 +7049,18 @@
           "url": "/_mozilla/css/block_formatting_context_containing_floats_a.html"
         }
       ],
+      "css/block_formatting_context_float_inorder_interaction_a.html": [
+        {
+          "path": "css/block_formatting_context_float_inorder_interaction_a.html",
+          "references": [
+            [
+              "/_mozilla/css/block_formatting_context_float_inorder_interaction_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/block_formatting_context_float_inorder_interaction_a.html"
+        }
+      ],
       "css/block_formatting_context_float_placement_a.html": [
         {
           "path": "css/block_formatting_context_float_placement_a.html",
@@ -7058,6 +7319,18 @@
             ]
           ],
           "url": "/_mozilla/css/border_radius_elliptical_a.html"
+        }
+      ],
+      "css/border_radius_in_border_radius_a.html": [
+        {
+          "path": "css/border_radius_in_border_radius_a.html",
+          "references": [
+            [
+              "/_mozilla/css/border_radius_in_border_radius_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/border_radius_in_border_radius_a.html"
         }
       ],
       "css/border_radius_overlapping_a.html": [
@@ -7708,6 +7981,18 @@
           "url": "/_mozilla/css/float_right_intrinsic_width_a.html"
         }
       ],
+      "css/float_speculation_negative_inline_margins_a.html": [
+        {
+          "path": "css/float_speculation_negative_inline_margins_a.html",
+          "references": [
+            [
+              "/_mozilla/css/float_speculation_negative_inline_margins_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/float_speculation_negative_inline_margins_a.html"
+        }
+      ],
       "css/float_table_a.html": [
         {
           "path": "css/float_table_a.html",
@@ -8128,6 +8413,18 @@
           "url": "/_mozilla/css/iframe/stacking_context_position_a.html"
         }
       ],
+      "css/image_percentage_dimen.html": [
+        {
+          "path": "css/image_percentage_dimen.html",
+          "references": [
+            [
+              "/_mozilla/css/image_percentage_dimen_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/image_percentage_dimen.html"
+        }
+      ],
       "css/image_rendering_auto_a.html": [
         {
           "path": "css/image_rendering_auto_a.html",
@@ -8306,6 +8603,54 @@
             ]
           ],
           "url": "/_mozilla/css/incremental_text_color_a.html"
+        }
+      ],
+      "css/incremental_trailing_whitespace_a.html": [
+        {
+          "path": "css/incremental_trailing_whitespace_a.html",
+          "references": [
+            [
+              "/_mozilla/css/incremental_trailing_whitespace_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/incremental_trailing_whitespace_a.html"
+        }
+      ],
+      "css/incremental_trailing_whitespace_ref.html": [
+        {
+          "path": "css/incremental_trailing_whitespace_ref.html",
+          "references": [
+            [
+              "/_mozilla/css/incremental_trailing_whitespace_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/incremental_trailing_whitespace_ref.html"
+        }
+      ],
+      "css/incremental_visibility_a.html": [
+        {
+          "path": "css/incremental_visibility_a.html",
+          "references": [
+            [
+              "/_mozilla/css/incremental_visibility_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/incremental_visibility_a.html"
+        }
+      ],
+      "css/incremental_visibility_ref.html": [
+        {
+          "path": "css/incremental_visibility_ref.html",
+          "references": [
+            [
+              "/_mozilla/css/incremental_visibility_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/incremental_visibility_ref.html"
         }
       ],
       "css/inline_absolute_hypothetical_clip_a.html": [
@@ -8680,6 +9025,18 @@
           "url": "/_mozilla/css/inline_whitespace_b.html"
         }
       ],
+      "css/input_alignment_a.html": [
+        {
+          "path": "css/input_alignment_a.html",
+          "references": [
+            [
+              "/_mozilla/css/input_alignment_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/input_alignment_a.html"
+        }
+      ],
       "css/input_button_margins_a.html": [
         {
           "path": "css/input_button_margins_a.html",
@@ -8716,6 +9073,18 @@
           "url": "/_mozilla/css/input_height_a.html"
         }
       ],
+      "css/input_insertion_point_empty_a.html": [
+        {
+          "path": "css/input_insertion_point_empty_a.html",
+          "references": [
+            [
+              "/_mozilla/css/input_insertion_point_empty_ref.html",
+              "!="
+            ]
+          ],
+          "url": "/_mozilla/css/input_insertion_point_empty_a.html"
+        }
+      ],
       "css/input_placeholder.html": [
         {
           "path": "css/input_placeholder.html",
@@ -8738,6 +9107,42 @@
             ]
           ],
           "url": "/_mozilla/css/input_placeholder_ref.html"
+        }
+      ],
+      "css/input_selection_a.html": [
+        {
+          "path": "css/input_selection_a.html",
+          "references": [
+            [
+              "/_mozilla/css/input_selection_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/input_selection_a.html"
+        }
+      ],
+      "css/input_selection_incremental_a.html": [
+        {
+          "path": "css/input_selection_incremental_a.html",
+          "references": [
+            [
+              "/_mozilla/css/input_selection_incremental_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/input_selection_incremental_a.html"
+        }
+      ],
+      "css/input_selection_ref.html": [
+        {
+          "path": "css/input_selection_ref.html",
+          "references": [
+            [
+              "/_mozilla/css/input_selection_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/input_selection_ref.html"
         }
       ],
       "css/input_whitespace.html": [
@@ -9398,6 +9803,18 @@
             ]
           ],
           "url": "/_mozilla/css/no_image_background_a.html"
+        }
+      ],
+      "css/non-inline-block-resets-underline-property.html": [
+        {
+          "path": "css/non-inline-block-resets-underline-property.html",
+          "references": [
+            [
+              "/_mozilla/css/non-inline-block-resets-underline-property-ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/non-inline-block-resets-underline-property.html"
         }
       ],
       "css/noscript.html": [
@@ -11424,6 +11841,18 @@
           "url": "/_mozilla/css/white_space_intrinsic_sizes_a.html"
         }
       ],
+      "css/whitespace_no_affect_border.html": [
+        {
+          "path": "css/whitespace_no_affect_border.html",
+          "references": [
+            [
+              "/_mozilla/css/whitespace_no_affect_border_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/css/whitespace_no_affect_border.html"
+        }
+      ],
       "css/whitespace_nowrap_a.html": [
         {
           "path": "css/whitespace_nowrap_a.html",
@@ -11652,6 +12081,30 @@
           "url": "/_mozilla/mozilla/canvas/drawimage_html_image_9.html"
         }
       ],
+      "mozilla/details_ui_closed.html": [
+        {
+          "path": "mozilla/details_ui_closed.html",
+          "references": [
+            [
+              "/_mozilla/mozilla/details_ui_closed_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/mozilla/details_ui_closed.html"
+        }
+      ],
+      "mozilla/details_ui_opened.html": [
+        {
+          "path": "mozilla/details_ui_opened.html",
+          "references": [
+            [
+              "/_mozilla/mozilla/details_ui_opened_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/mozilla/details_ui_opened.html"
+        }
+      ],
       "mozilla/iframe/resize_after_load.html": [
         {
           "path": "mozilla/iframe/resize_after_load.html",
@@ -11724,6 +12177,18 @@
           "url": "/_mozilla/mozilla/webgl/tex_image_2d_canvas_no_context.html"
         }
       ],
+      "mozilla/webgl/tex_image_2d_mipmap.html": [
+        {
+          "path": "mozilla/webgl/tex_image_2d_mipmap.html",
+          "references": [
+            [
+              "/_mozilla/mozilla/webgl/tex_image_2d_simple_ref.html",
+              "=="
+            ]
+          ],
+          "url": "/_mozilla/mozilla/webgl/tex_image_2d_mipmap.html"
+        }
+      ],
       "mozilla/webgl/tex_image_2d_simple.html": [
         {
           "path": "mozilla/webgl/tex_image_2d_simple.html",
@@ -11741,5 +12206,5 @@
   "reftest_nodes": {},
   "rev": null,
   "url_base": "/_mozilla/",
-  "version": 2
+  "version": 3
 }

@@ -23,8 +23,10 @@ use dom::keyboardevent::KeyboardEvent;
 use dom::node::{ChildrenMutation, Node, NodeDamage, UnbindContext};
 use dom::node::{document_from_node};
 use dom::nodelist::NodeList;
+use dom::validation::Validatable;
 use dom::virtualmethods::VirtualMethods;
 use msg::constellation_msg::ConstellationChan;
+use range::Range;
 use script_traits::ScriptMsg as ConstellationMsg;
 use std::cell::Cell;
 use string_cache::Atom;
@@ -45,7 +47,7 @@ pub trait LayoutHTMLTextAreaElementHelpers {
     #[allow(unsafe_code)]
     unsafe fn get_value_for_layout(self) -> String;
     #[allow(unsafe_code)]
-    unsafe fn get_absolute_insertion_point_for_layout(self) -> Option<usize>;
+    unsafe fn get_absolute_selection_for_layout(self) -> Option<Range<usize>>;
     #[allow(unsafe_code)]
     fn get_cols(self) -> u32;
     #[allow(unsafe_code)]
@@ -61,10 +63,10 @@ impl LayoutHTMLTextAreaElementHelpers for LayoutJS<HTMLTextAreaElement> {
 
     #[allow(unrooted_must_root)]
     #[allow(unsafe_code)]
-    unsafe fn get_absolute_insertion_point_for_layout(self) -> Option<usize> {
-        if (*self.unsafe_get()).upcast::<Element>().get_focus_state() {
+    unsafe fn get_absolute_selection_for_layout(self) -> Option<Range<usize>> {
+        if (*self.unsafe_get()).upcast::<Element>().focus_state() {
             Some((*self.unsafe_get()).textinput.borrow_for_layout()
-                                      .get_absolute_insertion_point())
+                                      .get_absolute_selection_range())
         } else {
             None
         }
@@ -89,7 +91,10 @@ impl LayoutHTMLTextAreaElementHelpers for LayoutJS<HTMLTextAreaElement> {
     }
 }
 
+// https://html.spec.whatwg.org/multipage/#attr-textarea-cols-value
 static DEFAULT_COLS: u32 = 20;
+
+// https://html.spec.whatwg.org/multipage/#attr-textarea-rows-value
 static DEFAULT_ROWS: u32 = 2;
 
 impl HTMLTextAreaElement {
@@ -204,7 +209,7 @@ impl HTMLTextAreaElementMethods for HTMLTextAreaElement {
         self.textinput.borrow_mut().set_content(value);
         self.value_changed.set(true);
 
-        self.force_relayout();
+        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-lfe-labels
@@ -227,13 +232,6 @@ impl HTMLTextAreaElement {
     }
 }
 
-
-impl HTMLTextAreaElement {
-    fn force_relayout(&self) {
-        let doc = document_from_node(self);
-        doc.content_changed(self.upcast(), NodeDamage::OtherNodeDamage)
-    }
-}
 
 impl VirtualMethods for HTMLTextAreaElement {
     fn super_type(&self) -> Option<&VirtualMethods> {
@@ -319,11 +317,11 @@ impl VirtualMethods for HTMLTextAreaElement {
                             ChangeEventRunnable::send(self.upcast::<Node>());
                         }
 
-                        self.force_relayout();
+                        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
                         event.PreventDefault();
                     }
                     KeyReaction::RedrawSelection => {
-                        self.force_relayout();
+                        self.upcast::<Node>().dirty(NodeDamage::OtherNodeDamage);
                         event.PreventDefault();
                     }
                     KeyReaction::Nothing => (),
@@ -334,3 +332,5 @@ impl VirtualMethods for HTMLTextAreaElement {
 }
 
 impl FormControl for HTMLTextAreaElement {}
+
+impl Validatable for HTMLTextAreaElement {}

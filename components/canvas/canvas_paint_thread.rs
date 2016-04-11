@@ -14,13 +14,9 @@ use euclid::size::Size2D;
 use gfx_traits::color;
 use ipc_channel::ipc::IpcSharedMemory;
 use ipc_channel::ipc::{self, IpcSender};
-use ipc_channel::router::ROUTER;
-use layers::platform::surface::NativeSurface;
 use num::ToPrimitive;
-use premultiplytable::PREMULTIPLY_TABLE;
 use std::borrow::ToOwned;
 use std::mem;
-use std::sync::mpsc::{Sender, channel};
 use util::opts;
 use util::thread::spawn_named;
 use util::vec::byte_swap;
@@ -125,16 +121,14 @@ impl<'a> CanvasPaintThread<'a> {
     /// sender for it.
     pub fn start(size: Size2D<i32>,
                  webrender_api_sender: Option<webrender_traits::RenderApiSender>)
-                    -> (IpcSender<CanvasMsg>, Sender<CanvasMsg>) {
+                 -> IpcSender<CanvasMsg> {
         // TODO(pcwalton): Ask the pipeline to create this for us instead of spawning it directly.
         // This will be needed for multiprocess Servo.
-        let (out_of_process_chan, out_of_process_port) = ipc::channel::<CanvasMsg>().unwrap();
-        let (in_process_chan, in_process_port) = channel();
-        ROUTER.route_ipc_receiver_to_mpsc_sender(out_of_process_port, in_process_chan.clone());
+        let (sender, receiver) = ipc::channel::<CanvasMsg>().unwrap();
         spawn_named("CanvasThread".to_owned(), move || {
             let mut painter = CanvasPaintThread::new(size, webrender_api_sender);
             loop {
-                let msg = in_process_port.recv();
+                let msg = receiver.recv();
                 match msg.unwrap() {
                     CanvasMsg::Canvas2d(message) => {
                         match message {
@@ -205,19 +199,12 @@ impl<'a> CanvasPaintThread<'a> {
                             }
                         }
                     }
-                    CanvasMsg::FromPaint(message) => {
-                        match message {
-                            FromPaintMsg::SendNativeSurface(chan) => {
-                                painter.send_native_surface(chan)
-                            }
-                        }
-                    }
                     CanvasMsg::WebGL(_) => panic!("Wrong message sent to Canvas2D thread"),
                 }
             }
         });
 
-        (out_of_process_chan, in_process_chan)
+        sender
     }
 
     fn save_context_state(&mut self) {
@@ -550,16 +537,7 @@ impl<'a> CanvasPaintThread<'a> {
         })
     }
 
-    fn send_native_surface(&self, _chan: Sender<NativeSurface>) {
-        // FIXME(mrobinson): We need a handle on the NativeDisplay to create compatible
-        // NativeSurfaces for the compositor.
-        unimplemented!()
-    }
-
-    fn image_data(&self,
-                      dest_rect: Rect<i32>,
-                      canvas_size: Size2D<f64>,
-                      chan: IpcSender<Vec<u8>>) {
+    fn image_data(&self, dest_rect: Rect<i32>, canvas_size: Size2D<f64>, chan: IpcSender<Vec<u8>>) {
         let mut dest_data = self.read_pixels(dest_rect, canvas_size);
 
         // bgra -> rgba
@@ -633,11 +611,12 @@ impl<'a> CanvasPaintThread<'a> {
         for _ in 0 .. dest_rect.size.height {
             let mut src_offset = src_line;
             for _ in 0 .. dest_rect.size.width {
-                // Premultiply alpha and swap RGBA -> BGRA.
-                let alpha = imagedata[src_offset + 3] as usize;
-                dest.push(PREMULTIPLY_TABLE[256 * alpha + imagedata[src_offset + 2] as usize]);
-                dest.push(PREMULTIPLY_TABLE[256 * alpha + imagedata[src_offset + 1] as usize]);
-                dest.push(PREMULTIPLY_TABLE[256 * alpha + imagedata[src_offset + 0] as usize]);
+                let alpha = imagedata[src_offset + 3] as u16;
+                // add 127 before dividing for more accurate rounding
+                let premultiply_channel = |channel: u8| (((channel as u16 * alpha) + 127) / 255) as u8;
+                dest.push(premultiply_channel(imagedata[src_offset + 2]));
+                dest.push(premultiply_channel(imagedata[src_offset + 1]));
+                dest.push(premultiply_channel(imagedata[src_offset + 0]));
                 dest.push(imagedata[src_offset + 3]);
                 src_offset += 4;
             }

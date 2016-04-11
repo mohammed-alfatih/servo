@@ -15,6 +15,8 @@
 
 #![feature(plugin_registrar, quote, plugin, box_syntax, rustc_private, slice_patterns)]
 
+#![deny(unsafe_code)]
+
 #[cfg(feature = "clippy")]
 extern crate clippy;
 #[macro_use]
@@ -68,5 +70,4 @@ fn register_clippy(reg: &mut Registry) {
 }
 #[cfg(not(feature = "clippy"))]
 fn register_clippy(reg: &mut Registry) {
-    reg.register_late_lint_pass(box lints::str_to_string::StrToStringPass);
 }

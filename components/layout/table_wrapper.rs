@@ -20,8 +20,7 @@ use context::LayoutContext;
 use display_list_builder::DisplayListBuildState;
 use euclid::Point2D;
 use floats::FloatKind;
-use flow::{Flow, FlowClass, ImmutableFlowUtils};
-use flow::{IMPACTED_BY_LEFT_FLOATS, IMPACTED_BY_RIGHT_FLOATS, INLINE_POSITION_IS_STATIC, OpaqueFlow};
+use flow::{Flow, FlowClass, ImmutableFlowUtils, INLINE_POSITION_IS_STATIC, OpaqueFlow};
 use fragment::{Fragment, FragmentBorderBoxIterator, Overflow};
 use gfx::display_list::{StackingContext, StackingContextId};
 use model::MaybeAuto;
@@ -31,7 +30,7 @@ use std::ops::Add;
 use std::sync::Arc;
 use style::computed_values::{border_collapse, table_layout};
 use style::logical_geometry::LogicalSize;
-use style::properties::ComputedValues;
+use style::properties::{ComputedValues, ServoComputedValues};
 use style::values::CSSFloat;
 use style::values::computed::LengthOrPercentageOrAuto;
 use table::{ColumnComputedInlineSize, ColumnIntrinsicInlineSize};
@@ -73,7 +72,7 @@ impl TableWrapperFlow {
     }
     fn border_padding_and_spacing(&mut self) -> (Au, Au) {
         let (mut table_border_padding, mut spacing) = (Au(0), Au(0));
-        for kid in self.block_flow.base.child_iter() {
+        for kid in self.block_flow.base.child_iter_mut() {
             if kid.is_table() {
                 let kid_table = kid.as_table();
                 spacing = kid_table.total_horizontal_spacing();
@@ -96,7 +95,7 @@ impl TableWrapperFlow {
         // padding will affect where we place the child. This is an odd artifact of the way that
         // tables are separated into table flows and table wrapper flows.
         let available_inline_size = self.block_flow.fragment.border_box.size.inline;
-        for kid in self.block_flow.base.child_iter() {
+        for kid in self.block_flow.base.child_iter_mut() {
             if !kid.is_table() {
                 continue
             }
@@ -309,7 +308,7 @@ impl Flow for TableWrapperFlow {
 
     fn bubble_inline_sizes(&mut self) {
         // Get the intrinsic column inline-sizes info from the table flow.
-        for kid in self.block_flow.base.child_iter() {
+        for kid in self.block_flow.base.child_iter_mut() {
             debug_assert!(kid.is_table_caption() || kid.is_table());
             if kid.is_table() {
                 self.column_intrinsic_inline_sizes = kid.column_intrinsic_inline_sizes().clone()
@@ -335,11 +334,6 @@ impl Flow for TableWrapperFlow {
                 percentage: column_intrinsic_inline_size.percentage,
             }
         }).collect::<Vec<_>>();
-
-        // Table wrappers are essentially block formatting contexts and are therefore never
-        // impacted by floats.
-        self.block_flow.base.flags.remove(IMPACTED_BY_LEFT_FLOATS);
-        self.block_flow.base.flags.remove(IMPACTED_BY_RIGHT_FLOATS);
 
         // Our inline-size was set to the inline-size of the containing block by the flow's parent.
         // Now compute the real value.
@@ -456,7 +450,7 @@ impl Flow for TableWrapperFlow {
         self.block_flow.collect_stacking_contexts(parent_id, contexts)
     }
 
-    fn repair_style(&mut self, new_style: &Arc<ComputedValues>) {
+    fn repair_style(&mut self, new_style: &Arc<ServoComputedValues>) {
         self.block_flow.repair_style(new_style)
     }
 

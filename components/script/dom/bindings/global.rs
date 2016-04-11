@@ -15,13 +15,14 @@ use dom::bindings::reflector::{Reflectable, Reflector};
 use dom::window::{self, ScriptHelpers};
 use dom::workerglobalscope::WorkerGlobalScope;
 use ipc_channel::ipc::IpcSender;
-use js::jsapi::GetGlobalForObjectCrossCompartment;
+use js::jsapi::{CurrentGlobalOrNull, GetGlobalForObjectCrossCompartment};
 use js::jsapi::{JSContext, JSObject, JS_GetClass, MutableHandleValue};
 use js::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use msg::constellation_msg::{ConstellationChan, PipelineId};
 use net_traits::ResourceThread;
 use profile_traits::mem;
-use script_thread::{CommonScriptMsg, MainThreadScriptChan, ScriptChan, ScriptPort, ScriptThread};
+use script_runtime::{CommonScriptMsg, ScriptChan, ScriptPort};
+use script_thread::{MainThreadScriptChan, ScriptThread};
 use script_traits::{MsDuration, ScriptMsg as ConstellationMsg, TimerEventRequest};
 use task_source::TaskSource;
 use task_source::dom_manipulation::DOMManipulationTask;
@@ -142,13 +143,23 @@ impl<'a> GlobalRef<'a> {
         }
     }
 
+    /// Get the [base url](https://html.spec.whatwg.org/multipage/#api-base-url)
+    /// for this global scope.
+    pub fn api_base_url(&self) -> Url {
+        match *self {
+            // https://html.spec.whatwg.org/multipage/#script-settings-for-browsing-contexts:api-base-url
+            GlobalRef::Window(ref window) => window.Document().base_url(),
+            // https://html.spec.whatwg.org/multipage/#script-settings-for-workers:api-base-url
+            GlobalRef::Worker(ref worker) => worker.get_url().clone(),
+        }
+    }
+
     /// `ScriptChan` used to send messages to the event loop of this global's
     /// thread.
     pub fn script_chan(&self) -> Box<ScriptChan + Send> {
         match *self {
-            GlobalRef::Window(ref window) => {
-                MainThreadScriptChan(window.main_thread_script_chan().clone()).clone()
-            }
+            GlobalRef::Window(ref window) =>
+                MainThreadScriptChan(window.main_thread_script_chan().clone()).clone(),
             GlobalRef::Worker(ref worker) => worker.script_chan(),
         }
     }
@@ -279,11 +290,10 @@ pub fn global_root_from_reflector<T: Reflectable>(reflector: &T) -> GlobalRoot {
     global_root_from_object(*reflector.reflector().get_jsobject())
 }
 
-/// Returns the global object of the realm that the given JS object was created in.
+/// Returns the Rust global object from a JS global object.
 #[allow(unrooted_must_root)]
-pub fn global_root_from_object(obj: *mut JSObject) -> GlobalRoot {
+pub fn global_root_from_global(global: *mut JSObject) -> GlobalRoot {
     unsafe {
-        let global = GetGlobalForObjectCrossCompartment(obj);
         let clasp = JS_GetClass(global);
         assert!(((*clasp).flags & (JSCLASS_IS_DOMJSCLASS | JSCLASS_IS_GLOBAL)) != 0);
         match root_from_object(global) {
@@ -297,5 +307,24 @@ pub fn global_root_from_object(obj: *mut JSObject) -> GlobalRoot {
         }
 
         panic!("found DOM global that doesn't unwrap to Window or WorkerGlobalScope")
+    }
+}
+
+/// Returns the global object of the realm that the given JS object was created in.
+#[allow(unrooted_must_root)]
+pub fn global_root_from_object(obj: *mut JSObject) -> GlobalRoot {
+    unsafe {
+        let global = GetGlobalForObjectCrossCompartment(obj);
+        global_root_from_global(global)
+    }
+}
+
+/// Returns the global object for the given JSContext
+#[allow(unrooted_must_root)]
+pub fn global_root_from_context(cx: *mut JSContext) -> GlobalRoot {
+    unsafe {
+        let global = CurrentGlobalOrNull(cx);
+        assert!(!global.is_null());
+        global_root_from_global(global)
     }
 }
