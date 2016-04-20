@@ -15,6 +15,14 @@ use util::str::DOMString;
 #[dom_struct]
 pub struct CSSRule {
     reflector_: Reflector,
+    /*const STYLE_RULE: u16 = 1;
+    const unsigned short CHARSET_RULE= 2; // historical
+    const unsigned short IMPORT_RULE = 3;
+    const unsigned short MEDIA_RULE = 4;
+    const unsigned short FONT_FACE_RULE = 5;
+    const unsigned short PAGE_RULE = 6;
+    const unsigned short MARGIN_RULE = 9;
+    const unsigned short NAMESPACE_RULE = 10;*/
     type_: u16,
     //cssText: DOMString,
 }
@@ -40,6 +48,7 @@ impl CSSRule {
 impl CSSRuleMethods for CSSRule {
     // https://drafts.csswg.org/cssom/#dom-cssrule-type
     fn Type_(&self) -> u16 {
+        
         if self.eq(&self){
            1}
         else if self.eq(&self){

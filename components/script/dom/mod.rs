@@ -239,6 +239,7 @@ pub mod crypto;
 pub mod css;
 pub mod cssrule;
 pub mod cssrulelist;
+pub mod cssstylesheet;
 pub mod cssstyledeclaration;
 pub mod customevent;
 pub mod dedicatedworkerglobalscope;
